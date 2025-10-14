@@ -7,6 +7,9 @@
 - [Features](#features)
 - [Installation & Quick Start](#installation--quick-start)
 - [Models & Environments](#models--environments)
+- [cURL: Qwen3 text generation](#curl-qwen3-text-generation)
+- [cURL: Qwen‑VL (multimodal)](#curl-qwen-vl-multimodal)
+- [cURL: WhisSent (ASR + Emotion)](#curl-whissent-asr--emotion)
 - [Configuration](#configuration)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -18,7 +21,6 @@
 - [Parallelization & GPU Sharing](#parallelization--gpu-sharing)
 - [Validation & Load Testing](#validation--load-testing)
 - [Security & Binding Defaults](#security--binding-defaults)
-- [WhisSent (Whisper ASR + Emotion)](#whissent-whisper-asr--emotion)
 
 ## Features
 
@@ -158,24 +160,47 @@ curl -sS -X POST http://127.0.0.1:9001/infer \
   }' | jq .
 ```
 
-## Installation & Environment Setup
+## cURL: WhisSent (ASR + Emotion)
 
-```bash
-# 1) Clone
-git clone https://github.com/ziedmustapha/Orchestra.git
+WhisSent combines Hugging Face models:
+- ASR: `openai/whisper-large-v3`
+- Emotion (FR): `Lajavaness/wav2vec2-lg-xlsr-fr-speech-emotion-recognition`
 
-# 2) Create per‑model virtualenvs automatically
-scripts/setup_envs.sh           # creates .venvs/{env3,env4,env5,env-lb}, installs deps
-source ./orchestra.env          # exports GEMMA/QWEN/QWEN3/WHISSENT/LOAD_BALANCER_PYTHON_PATH
+Each WhisSent worker accepts `model_name = "whissent"` with an audio payload and returns:
+- `transcript` and optional `chunks` with timestamps
+- `emotion` (top label) and `emotion_scores` (list of labels/scores)
 
-# 4) API keys (for external access), ignore if used only by local processes
-cp src/api_keys.example.json api_keys.json
-
-# 5) System prerequisites (for WhisSent and PDFs)
-sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils
+Example `POST /infer` request via the load balancer:
+```json
+{
+  "model_name": "whissent",
+  "request_body": {
+    "audio": {"path": "/absolute/path/to/audio.wav"},
+    "return_timestamps": true,
+    "task": "transcribe",
+    "language": "fr",
+    "emotion_top_k": 3,
+    "session_id": "demo-123"
+  }
+}
 ```
 
-## Configuration
+Audio sources supported:
+- `{ "path": "/abs/file.wav" }`
+- `{ "url": "https://.../file.mp3" }`
+- `{ "data": "<base64>", "format": "wav|mp3|flac|m4a|ogg" }`
+
+Dependencies for WhisSent (env3):
+- Python: `torch`, `torchaudio`, `transformers`, `requests`
+- Audio I/O: `librosa`, `soundfile` (install via pip)
+- System: `ffmpeg` (install via apt/yum if not present)
+
+If you run `tests/test_concurrency.py`, the test excludes `whissent` by default (to avoid requiring an audio file). To include WhisSent, pass the model name and an audio path:
+```bash
+python3 tests/test_concurrency.py --models whissent --audio-file /absolute/path/to/audio.wav
+```
+
+## Installation & Environment Setup
 
 - **Host/port**: set `LOAD_BALANCER_HOST` (default `127.0.0.1`) and `LOAD_BALANCER_PORT` (default `9001`).
 - **API keys file**: set `API_KEYS_FILE` or place `api_keys.json` at repo root.
@@ -321,42 +346,3 @@ python3 tests/simulate_users.py --users 30 --hold-sec 60
 
 - By default the load balancer binds to `127.0.0.1:9001` (local‑only). All examples use `http://127.0.0.1:9001` and the dashboard at `/dashboard`.
 - To expose the API externally, set `LOAD_BALANCER_HOST=0.0.0.0` (and ensure firewall rules allow traffic) and configure API keys in `api_keys.json`. See `docs/API_AUTHENTICATION.md` for details.
-
-## WhisSent (Whisper ASR + Emotion)
-
-WhisSent combines Hugging Face models:
-- ASR: `openai/whisper-large-v3`
-- Emotion (FR): `Lajavaness/wav2vec2-lg-xlsr-fr-speech-emotion-recognition`
-
-Each WhisSent worker accepts `model_name = "whissent"` with an audio payload and returns:
-- `transcript` and optional `chunks` with timestamps
-- `emotion` (top label) and `emotion_scores` (list of labels/scores)
-
-Example `POST /infer` request via the load balancer:
-```json
-{
-  "model_name": "whissent",
-  "request_body": {
-    "audio": {"path": "/absolute/path/to/audio.wav"},
-    "return_timestamps": true,
-    "task": "transcribe",
-    "language": "fr",
-    "emotion_top_k": 3,
-    "session_id": "demo-123"
-  }
-}
-```
-
-Audio sources supported:
-- `{ "path": "/abs/file.wav" }`
-- `{ "url": "https://.../file.mp3" }`
-- `{ "data": "<base64>", "format": "wav|mp3|flac|m4a|ogg" }`
-
-Dependencies for WhisSent (env3):
-- Python: `torch`, `torchaudio`, `transformers`, `requests`
-- Audio I/O: `librosa`, `soundfile` (install via pip)
-- System: `ffmpeg` (install via apt/yum if not present)
-
-If you run `tests/test_concurrency.py`, the test excludes `whissent` by default (to avoid requiring an audio file). To include WhisSent, pass the model name and an audio path:
-```bash
-python3 tests/test_concurrency.py --models whissent --audio-file /absolute/path/to/audio.wav
