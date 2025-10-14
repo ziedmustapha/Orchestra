@@ -1,0 +1,188 @@
+# Core ML Framework
+torch
+torchaudio
+torchvision
+triton
+
+# vLLM and acceleration
+vllm
+xformers
+accelerate
+bitsandbytes
+
+# Transformers and NLP
+transformers
+tokenizers
+sentencepiece
+tiktoken
+safetensors
+
+# LangChain ecosystem
+langchain
+langchain-core
+langchain-text-splitters
+langsmith
+
+# ML/Data Science
+numpy
+scipy
+numba
+cupy-cuda12x
+
+# Computer Vision
+opencv-python-headless
+pillow
+av
+qwen-vl-utils
+
+# API and Web
+fastapi
+fastapi-cli
+uvicorn[standard]
+uvloop
+httpx
+httpcore
+httptools
+aiohttp
+starlette
+websockets
+
+# Database
+sqlalchemy
+redis
+
+# Distributed computing
+ray
+
+# Cloud/AI Services
+openai
+huggingface-hub
+hf-xet
+
+# Monitoring and telemetry
+prometheus-client
+prometheus-fastapi-instrumentator
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+opentelemetry-exporter-otlp-proto-common
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-proto
+opentelemetry-semantic-conventions
+opentelemetry-semantic-conventions-ai
+
+# Utilities
+requests
+requests-toolbelt
+pyyaml
+python-dotenv
+python-multipart
+python-json-logger
+click
+typer
+tqdm
+rich
+rich-toolkit
+shellingham
+
+# Data handling
+jsonschema
+jsonschema-specifications
+jsonpatch
+jsonpointer
+pydantic
+pydantic_core
+packaging
+filelock
+fsspec
+pdf2image
+
+# Math and symbolic
+sympy
+mpmath
+einops
+
+# Specialized ML tools
+mistral_common
+gguf
+llguidance
+lm-format-enforcer
+outlines
+outlines_core
+compressed-tensors
+depyf
+interegular
+lark
+partial-json-parser
+xgrammar
+
+# Async and networking
+anyio
+nest-asyncio
+aiohappyeyeballs
+aiosignal
+async-timeout
+frozenlist
+multidict
+propcache
+yarl
+dnspython
+email_validator
+grpcio
+googleapis-common-protos
+protobuf
+
+# Performance and system
+psutil
+py-cpuinfo
+cloudpickle
+diskcache
+cachetools
+pyzmq
+msgpack
+msgspec
+orjson
+zstandard
+blake3
+
+# Other utilities
+attrs
+certifi
+charset-normalizer
+idna
+urllib3
+h11
+sniffio
+exceptiongroup
+tenacity
+dill
+distro
+greenlet
+fastrlock
+llvmlite
+networkx
+ninja
+joblib
+regex
+jinja2
+markupsafe
+markdown-it-py
+mdurl
+pygments
+watchfiles
+typing_extensions
+typing-inspection
+annotated-types
+jiter
+referencing
+rpds-py
+zipp
+importlib_metadata
+astor
+airportsdata
+pycountry
+
+# Audio I/O extras for WhisSent
+librosa
+soundfile

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/requirements.txt
+      - name: Static import check
+        run: |
+          python -m compileall -q .
+          PYTHONPATH="$PWD/src" python - << 'PY'
+          import importlib
+          mods = ['load_balancer', 'main', 'logging_config']
+          for m in mods:
+              importlib.import_module(m)
+          print('Imports OK')
+          PY

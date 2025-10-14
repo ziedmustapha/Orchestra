@@ -1,0 +1,112 @@
+# Core ML Framework
+torch
+triton==3.3.1
+
+# Transformers and NLP
+transformers
+tokenizers
+safetensors
+accelerate
+bitsandbytes
+
+# LangChain ecosystem
+langchain
+langchain-core
+langchain-text-splitters
+langsmith
+
+# ML/Data Science
+numpy
+scipy
+networkx
+
+# API and Web
+fastapi
+uvicorn[standard]
+uvloop
+httpx
+httpcore
+httptools
+aiohttp
+starlette
+websockets
+
+# Database
+sqlalchemy
+
+# Cloud/AI Services
+huggingface-hub
+hf-xet
+
+# Monitoring and system
+gpustat
+blessed
+nvidia-ml-py
+nvidia-ml-py3
+psutil
+
+# Utilities
+requests
+requests-toolbelt
+pyyaml
+python-dotenv
+python-multipart
+click
+tqdm
+regex
+
+# Data handling
+pydantic
+pydantic_core
+packaging
+filelock
+fsspec
+
+# Math and symbolic
+sympy
+mpmath
+
+# Testing
+pytest
+pytest-asyncio
+pluggy
+iniconfig
+
+# Async and networking
+anyio
+aiohappyeyeballs
+aiosignal
+async-timeout
+frozenlist
+multidict
+propcache
+yarl
+
+# Performance and serialization
+orjson
+zstandard
+jsonpatch
+jsonpointer
+
+# Other utilities
+attrs
+certifi
+charset-normalizer
+idna
+urllib3
+h11
+sniffio
+exceptiongroup
+tenacity
+greenlet
+jinja2
+markupsafe
+pygments
+watchfiles
+typing_extensions
+typing-inspection
+wcwidth
+tomli
+backports.asyncio.runner
+
+vllm

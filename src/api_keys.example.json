@@ -1,0 +1,5 @@
+{
+  "valid_keys": ["change-me-demo-key-123"],
+  "require_auth_for_external": true,
+  "local_networks": ["127.0.0.1", "localhost", "::1"]
+}
