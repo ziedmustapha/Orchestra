@@ -226,7 +226,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Author
 
-Zied Mustapha
+Zied Mustapha - Data Scientist and AI engineer @ Teldar IA - Switzerland
 
 ## Dashboard & Observability
 
