@@ -1,6 +1,6 @@
 # Orchestra
 
-> A multi-model AI load balancer for distributed GPU inference.
+> Orchestrate multiple AI models on distributed GPUs with intelligent load balancing, parallelization, GPU optimization, and real-time observability.
 
 ## Table of Contents
 
