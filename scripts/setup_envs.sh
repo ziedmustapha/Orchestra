@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Zied Mustapha
 set -euo pipefail
 
 # setup_envs.sh

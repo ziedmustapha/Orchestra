@@ -1,4 +1,5 @@
 # models/qwen.py - vLLM version for Qwen-VL
+# Author: Zied Mustapha
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from langchain.schema import AIMessage

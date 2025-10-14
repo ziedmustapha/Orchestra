@@ -1,4 +1,5 @@
 # models/whisSent.py - Whisper ASR + FR Emotion Classification
+# Author: Zied Mustapha
 import os
 import io
 import gc

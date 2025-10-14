@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 API Key Management Script for AI GPU Optimization System
+Author: Zied Mustapha
 Usage:
   python manage_api_keys.py list                    # List all API keys
   python manage_api_keys.py add <key>               # Add a new API key

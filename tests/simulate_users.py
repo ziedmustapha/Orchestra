@@ -8,7 +8,9 @@ Multi-user simulation for the ORCHESTRA load balancer.
 - Random think-time between iterations.
 - Aggregates per-model metrics and writes a JSON report to ./logs/.
 
-Examples:
+Author: Zied Mustapha
+
+Usage examples:
   python3 tests/simulate_users.py --users 30 --ramp-up-sec 10 --hold-sec 60 --ramp-down-sec 10
   python3 tests/simulate_users.py --users 50 --weights gemma3:0.5,qwen:0.2,qwen3:0.2,whissent:0.1 --api-key <KEY>
 """

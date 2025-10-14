@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Zied Mustapha
 
 # --- Ensure we run from the repository root ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

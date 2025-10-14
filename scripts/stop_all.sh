@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Author: Zied Mustapha
 # Fast stop/cleanup for all workers, balancer, and CUDA MPS
 # Usage: ./stop_all.sh
 # Note: May prompt for sudo when stopping NVIDIA MPS control daemon.

@@ -1,4 +1,5 @@
 # models/qwen3_vllm.py - Qwen3-30B-A3B-Thinking-2507 vLLM implementation
+# Author: Zied Mustapha
 from vllm import LLM, SamplingParams
 from vllm.distributed.parallel_state import destroy_model_parallel
 import torch

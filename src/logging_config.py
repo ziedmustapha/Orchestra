@@ -8,6 +8,8 @@ from datetime import datetime
 from contextvars import ContextVar
 from typing import Any, Dict
 
+# Author: Zied Mustapha
+
 # Context variable to carry correlation/request IDs across async tasks
 correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
 

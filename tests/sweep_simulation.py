@@ -3,6 +3,8 @@
 Run a sweep of the simulate_users.py command for multiple user counts and
 aggregate all JSON reports into a single file.
 
+Author: Zied Mustapha
+
 Default command template (only --users changes between runs):
   /usr/bin/python3 tests/simulate_users.py \
     --users <N> \

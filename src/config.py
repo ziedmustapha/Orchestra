@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
+# Author: Zied Mustapha
+
 class Settings(BaseSettings):
     # Redis Configuration
     redis_host: str = Field(default="localhost", env="REDIS_HOST")

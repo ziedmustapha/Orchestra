@@ -1,4 +1,5 @@
 # load_balancer.py
+# Author: Zied Mustapha
 import asyncio
 import aiohttp
 import time

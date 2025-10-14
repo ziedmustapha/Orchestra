@@ -4,7 +4,7 @@ Small smoke test for each model instance via the load balancer.
 - gemma3: text-only
 - qwen: text + image
 - qwen3: text-only
-
+Author: Zied Mustapha
 Usage examples:
   python3 test_instances.py
   python3 test_instances.py --api-url http://127.0.0.1:9001/infer --image /path/to/image.png

@@ -2,6 +2,8 @@
 """
 Comprehensive concurrency and load test for the Multi-Model Load Balancer.
 
+Author: Zied Mustapha
+
 Features
 - Auto-discovers worker counts per model from /status
 - Runs concurrent requests per model (gemma3, qwen, qwen3)

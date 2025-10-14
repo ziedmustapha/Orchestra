@@ -1,58 +1,66 @@
 # Orchestra
 
-Python3.11
-
-## Multi-Model AI GPU Optimization System
-
-Supports concurrent inference for:
-- **Gemma3** models (env4)
-- **Qwen2.5-VL** models (env3)
-- **Qwen3-30B-A3B-Instruct-2507-FP8** models (env5)
-- **WhisSent**: Whisper Large V3 ASR + FR Speech Emotion Recognition (env3)
+> A multi-model AI load balancer for distributed GPU inference.
 
 ## Table of Contents
 
-- Quick Start
-- Models & Environments
-- cURL: Qwen3 text generation
-- cURL: Qwen‑VL (multimodal)
-- Installation & Environment Setup
-- Configuration
-- Development
-- Dashboard & Observability
-- Structured Logging
-- Parallelization & GPU Sharing
-- Validation & Load Testing
-- Security & Binding Defaults
-- WhisSent (Whisper ASR + Emotion)
-- Contributing
-- License
+- [Features](#features)
+- [Installation & Quick Start](#installation--quick-start)
+- [Models & Environments](#models--environments)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Security](#security)
+- [License](#license)
+- [Author](#author)
+- [Dashboard & Observability](#dashboard--observability)
+- [Structured Logging](#structured-logging)
+- [Parallelization & GPU Sharing](#parallelization--gpu-sharing)
+- [Validation & Load Testing](#validation--load-testing)
+- [Security & Binding Defaults](#security--binding-defaults)
+- [WhisSent (Whisper ASR + Emotion)](#whissent-whisper-asr--emotion)
 
-## Quick Start
+## Features
 
-**Start with 2 Gemma3, 1 Qwen, 1 Qwen3, 1 WhisSent workers:**
+- **Multi-Model Support**: Gemma3, Qwen2.5-VL, Qwen3, WhisSent (Whisper + Emotion)
+- **Load Balancing**: Round-robin across GPU workers with queueing and health checks
+- **GPU Optimization**: CUDA MPS for multi-process sharing, vLLM for inference
+- **Authentication**: Optional API key auth for external access
+- **Observability**: Live dashboard, JSON metrics, structured logs
+- **Scalability**: Auto-scaling workers per model
+- **Validation & Load Testing**
+- **Security & Binding Defaults**
+- **WhisSent (Whisper ASR + Emotion)**
+
+## Installation & Quick Start
+
+Follow these steps to get Orchestra running:
+
 ```bash
-./scripts/run_api.sh 2 1 1 1 start
-```
+# 1) Clone the repository
+git clone https://github.com/ziedmustapha/Orchestra.git
+cd Orchestra
 
-**Start with 1 Gemma3, 0 Qwen, 2 Qwen3 workers (no WhisSent):**
-```bash
-./scripts/run_api.sh 1 0 2 start
-```
+# 2) Set up per-model virtual environments and install dependencies
+scripts/setup_envs.sh           # creates .venvs/{env3,env4,env5,env-lb}, installs deps
 
-You can also set WhisSent via env var:
-```bash
-WHISSENT_INSTANCES=1 ./scripts/run_api.sh 1 0 2 start
-```
+# 3) Activate the environment variables
+source ./orchestra.env          # exports GEMMA/QWEN/QWEN3/WHISSENT/LOAD_BALANCER_PYTHON_PATH
 
-Once started, open the live dashboard at:
+# 4) Install system prerequisites (for WhisSent and PDFs)
+sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils
 
+# 5) Start the API with 1 Qwen3 worker (adjust numbers as needed)
+scripts/run_api.sh 0 0 1 1 start
+
+# 6) Open the dashboard
 http://127.0.0.1:9001/dashboard
 
+# 7) Test it quickly
+python3 tests/test_concurrency.py --models whissent,qwen3 --per-model-requests 10 --concurrency-per-model 10 --models-concurrently
 
-**Stop & cleanup:**
-```bash
-./scripts/stop_all.sh   # optional cleanup of MPS and worker processes
+# 8) Stop everything
+scripts/stop_all.sh
 ```
 
 ## Models & Environments
@@ -62,7 +70,7 @@ http://127.0.0.1:9001/dashboard
 - **env5 → Qwen3** (QWEN3_PYTHON_PATH)
 - **env-lb → Load balancer** (LOAD_BALANCER_PYTHON_PATH)
 
-See Environment Setup below to generate these automatically.
+See Installation & Quick Start above for setup.
 
 ## cURL: Qwen3 text generation
 
@@ -154,20 +162,14 @@ curl -sS -X POST http://127.0.0.1:9001/infer \
 
 ```bash
 # 1) Clone
-git clone https://github.com/<your-org>/orchestra.git
-cd orchestra
+git clone https://github.com/ziedmustapha/Orchestra.git
 
 # 2) Create per‑model virtualenvs automatically
-chmod +x scripts/setup_envs.sh
 scripts/setup_envs.sh           # creates .venvs/{env3,env4,env5,env-lb}, installs deps
 source ./orchestra.env          # exports GEMMA/QWEN/QWEN3/WHISSENT/LOAD_BALANCER_PYTHON_PATH
 
-# 3) (Optional) If you prefer a single environment for everything
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements/requirements_env.txt
-
-# 4) API keys (for external access)
-cp src/api_keys.example.json api_keys.json  # then edit valid_keys
+# 4) API keys (for external access), ignore if used only by local processes
+cp src/api_keys.example.json api_keys.json
 
 # 5) System prerequisites (for WhisSent and PDFs)
 sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils
@@ -196,6 +198,10 @@ See `SECURITY.md` for reporting vulnerabilities. Do not include secrets in issue
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Author
+
+Zied Mustapha
 
 ## Dashboard & Observability
 

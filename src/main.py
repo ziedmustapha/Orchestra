@@ -1,4 +1,5 @@
 # main.py
+# Author: Zied Mustapha
 import time
 import asyncio
 import os
