@@ -232,6 +232,8 @@ Zied Mustapha - Data Scientist and AI engineer @ Teldar IA - Switzerland
 
 The load balancer now embeds a real‑time dashboard and metrics endpoints.
 
+![Dashboard Screenshot](docs/image_readme.png)
+
 - Dashboard: `http://127.0.0.1:9001/dashboard`
   - Overview: uptime, total requests, success/errors
   - Per model: request, success, error counters
