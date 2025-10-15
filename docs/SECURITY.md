@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-- Please email <INSERT_SECURITY_CONTACT_EMAIL> with details and steps to reproduce.
+- Please email me with details and steps to reproduce.
 - We aim to acknowledge within 72 hours and provide updates as we triage.
 - Do not include secrets or PII in reports.
 
