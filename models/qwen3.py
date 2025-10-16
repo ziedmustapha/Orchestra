@@ -46,7 +46,6 @@ VLLM_CONFIG = {
 # Add version-specific parameters
 # These parameters may not exist in all versions, so we'll try them conditionally
 OPTIONAL_VLLM_CONFIG = {
-    "quantization": "fp8",  # FP8 quantization if supported
     "enforce_eager": False,  # Enable CUDA graphs if supported
     "enable_prefix_caching": True,  # Enable prefix caching if supported
     "disable_log_stats": True,  # Disable logging if supported
