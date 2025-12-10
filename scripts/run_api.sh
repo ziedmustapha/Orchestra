@@ -213,7 +213,7 @@ start_service() {
         WORKER_PIDS[$i]=$!
         
         echo "Worker $i ($MODEL_TO_LOAD) started with PID ${WORKER_PIDS[$i]}"
-        sleep 30
+        sleep 90
     done
 
     echo "All workers launched. Waiting..."

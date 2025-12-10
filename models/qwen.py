@@ -2,7 +2,7 @@
 # Author: Zied Mustapha
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
-from langchain.schema import AIMessage
+from langchain_core.messages import AIMessage
 
 import torch
 import os
@@ -41,6 +41,8 @@ IMAGE_TOKEN_BUDGET = int(os.environ.get("QWEN_IMAGE_TOKENS_PER_IMAGE", "16000"))
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
+# Force V0 engine - V1 engine (vLLM 0.8.x default) has stricter memory checks
+os.environ['VLLM_USE_V1'] = '0'
 
 # Qwen is typically stateless for vision tasks, so no session history needed.
 
@@ -68,8 +70,8 @@ def concurrent_qwen_worker(task_queue: Queue, result_queue: Queue, worker_id: in
             model=MODEL_NAME,
             dtype=torch.bfloat16,
             trust_remote_code=True,
-            gpu_memory_utilization=0.32, # Vision models can be memory-intensive
-            max_model_len=30000,
+            gpu_memory_utilization=0.3, # Vision models can be memory-intensive
+            max_model_len=8192,
             max_num_seqs=8, # Adjust based on VRAM
             enable_chunked_prefill=True
         )

@@ -1,6 +1,7 @@
-# Core ML Framework
-torch
-triton==3.3.1
+# Core ML Framework - let vLLM control torch version for compatibility
+# torch  # commented out - vllm will pull the right version
+triton
+setuptools  # required by triton
 
 # Transformers and NLP
 transformers
@@ -109,4 +110,6 @@ wcwidth
 tomli
 backports.asyncio.runner
 
-vllm
+# vLLM (use pre-built wheels)
+# Pin to 0.6.x-0.8.x for torch 2.4/2.5 compatibility with flash-attn kernels
+vllm>=0.6.0,<0.9.0

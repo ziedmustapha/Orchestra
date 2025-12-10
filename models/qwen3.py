@@ -36,23 +36,21 @@ except:
 
 # Base configuration that works with most vLLM versions
 VLLM_CONFIG = {
-    "gpu_memory_utilization": 0.47,
-    "max_model_len": 15000,  # Maximum context length
-    "tensor_parallel_size": 1,  # Single GPU
-    "dtype": "auto",  # Let vLLM determine best dtype
-    "trust_remote_code": True,  # Required for some models
+    "gpu_memory_utilization": 0.6,
+    "max_model_len": 5000,
+    "tensor_parallel_size": 1,
+    "dtype": "auto",
+    "trust_remote_code": True,
 }
 
-# Add version-specific parameters
-# These parameters may not exist in all versions, so we'll try them conditionally
 OPTIONAL_VLLM_CONFIG = {
-    "enforce_eager": False,  # Enable CUDA graphs if supported
-    "enable_prefix_caching": True,  # Enable prefix caching if supported
-    "disable_log_stats": True,  # Disable logging if supported
-    "max_num_seqs": 256,  # Maximum sequences if supported
-    "swap_space": 4,  # GB of CPU swap space if supported
-    "enable_chunked_prefill": False,  # May not be available in all versions
-    "max_num_batched_tokens": 32768,  # Maximum tokens in a batch if supported
+    "enforce_eager": False,
+    "enable_prefix_caching": True,
+    "disable_log_stats": True,
+    "max_num_seqs": 32,           # was 256
+    "swap_space": 4,
+    "enable_chunked_prefill": True,
+    "max_num_batched_tokens": 4096,  # was 32768 - THIS IS KEY
 }
 
 # --- CRITICAL: Environment variables for stability ---
@@ -61,6 +59,9 @@ os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['VLLM_ATTENTION_BACKEND'] = 'FLASH_ATTN'  # Use Flash Attention
 os.environ['CUDA_LAUNCH_BLOCKING'] = '0'  # Enable async CUDA operations
+# Force V0 engine - V1 engine (vLLM 0.8.x default) has stricter memory checks
+# that fail when running multiple models on same GPU
+os.environ['VLLM_USE_V1'] = '0'
 
 # --- Concurrent vLLM Qwen3 worker ---
 def concurrent_vllm_qwen3_worker(task_queue: Queue, result_queue: Queue, worker_id: int, gpu_id: str, process_id_str: str):

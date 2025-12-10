@@ -3,7 +3,7 @@
 from vllm import LLM, SamplingParams
 from vllm.inputs import TokensPrompt
 from transformers import AutoTokenizer  # Still need for tokenization
-from langchain.schema import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 import torch
 import os
@@ -40,6 +40,8 @@ DEFAULT_MAX_NEW_TOKENS_MULTI = 400000
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
+# Force V0 engine - V1 engine (vLLM 0.8.x default) has stricter memory checks
+os.environ['VLLM_USE_V1'] = '0'
 
 # --- Session histories (in-memory, per-worker, for TEXT-ONLY chats) ---
 session_histories: dict[str, list[dict]] = {}

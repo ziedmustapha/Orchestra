@@ -3,7 +3,8 @@
 set -euo pipefail
 
 # setup_envs.sh
-# Create per-model virtual environments and install the right requirements.
+# Create per-model virtual environments using uv and install the right requirements.
+# Uses Python 3.10 for all environments.
 # - env3: Qwen-VL + WhisSent deps (requirements/requirements_env3.txt)
 # - env4: Gemma3 deps (requirements/requirements_env4.txt)
 # - env5: Qwen3 deps (requirements/requirements_env5.txt)
@@ -13,7 +14,6 @@ set -euo pipefail
 #   scripts/setup_envs.sh                    # create env3 env4 env5 env-lb under .venvs
 #   scripts/setup_envs.sh env3 env5          # only create env3 and env5
 #   scripts/setup_envs.sh --venv-dir /opt/orchestra-venvs
-#   scripts/setup_envs.sh --python-bin /usr/bin/python3.11
 #   scripts/setup_envs.sh --recreate         # delete and recreate existing envs
 #   scripts/setup_envs.sh --no-write-exports # do not generate orchestra.env
 #
@@ -28,33 +28,25 @@ REQ_DIR="$REPO_ROOT/requirements"
 # Defaults
 VENV_DIR_DEFAULT="$REPO_ROOT/.venvs"
 VENV_DIR="${VENV_DIR:-$VENV_DIR_DEFAULT}"
-PYTHON_BIN="${PYTHON_BIN:-}"
+PYTHON_VERSION="3.10"
 RECREATE=0
 WRITE_EXPORTS=1
 
-# Choose a Python binary if not provided
-choose_python() {
-  if [[ -n "$PYTHON_BIN" ]]; then
-    echo "$PYTHON_BIN"
-    return 0
-  fi
-  if command -v python3.11 >/dev/null 2>&1; then
-    echo "$(command -v python3.11)"
-  elif command -v python3 >/dev/null 2>&1; then
-    echo "$(command -v python3)"
-  else
-    echo "ERROR: python3.11 or python3 not found in PATH" >&2
+# Check that uv is installed
+check_uv() {
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "ERROR: uv is not installed. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
     exit 1
   fi
 }
 
 print_help() {
   cat <<EOF
-Create per-model virtual environments and install requirements.
+Create per-model virtual environments using uv and install requirements.
+Always uses Python $PYTHON_VERSION.
 
 Options:
   --venv-dir DIR        Target directory for virtualenvs (default: $VENV_DIR_DEFAULT)
-  --python-bin PATH     Python interpreter to use for venv creation (default: auto-detect)
   --recreate            Remove and recreate envs even if they already exist
   --no-write-exports    Do not write ./orchestra.env exports file
   -h, --help            Show this help
@@ -68,7 +60,7 @@ Positional args (optional, default: env3 env4 env5 lb):
 Examples:
   scripts/setup_envs.sh
   scripts/setup_envs.sh env3 env5
-  scripts/setup_envs.sh --venv-dir /opt/orchestra-venvs --python-bin /usr/bin/python3.11
+  scripts/setup_envs.sh --venv-dir /opt/orchestra-venvs
 EOF
 }
 
@@ -78,8 +70,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --venv-dir)
       VENV_DIR="$2"; shift 2;;
-    --python-bin)
-      PYTHON_BIN="$2"; shift 2;;
     --recreate)
       RECREATE=1; shift;;
     --no-write-exports)
@@ -97,14 +87,14 @@ if [[ ${#ENVS[@]} -eq 0 ]]; then
   ENVS=(env3 env4 env5 lb)
 fi
 
-PY_BIN="$(choose_python)"
+check_uv
 mkdir -p "$VENV_DIR"
 
 create_env() {
   local name="$1"; shift
   local req_file="$1"; shift
   local venv_path="$VENV_DIR/$name"
-  echo "==> Setting up $name at $venv_path"
+  echo "==> Setting up $name at $venv_path (Python $PYTHON_VERSION)"
   if [[ -d "$venv_path" ]]; then
     if [[ "$RECREATE" -eq 1 ]]; then
       echo "Removing existing env: $venv_path"
@@ -114,13 +104,12 @@ create_env() {
     fi
   fi
   if [[ ! -d "$venv_path" ]]; then
-    "$PY_BIN" -m venv "$venv_path"
+    uv venv --python "$PYTHON_VERSION" "$venv_path"
   fi
-  # Upgrade pip tooling and install requirements
-  "$venv_path/bin/python" -m pip install --upgrade pip setuptools wheel
+  # Install requirements using uv pip
   if [[ -f "$req_file" ]]; then
     echo "Installing from $req_file"
-    "$venv_path/bin/pip" install -r "$req_file"
+    uv pip install --python "$venv_path/bin/python" -r "$req_file"
   else
     echo "ERROR: Requirements file not found: $req_file" >&2
     exit 1
