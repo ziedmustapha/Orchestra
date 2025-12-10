@@ -59,6 +59,39 @@ if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
         echo "No model instances configured. Set GEMMA3_INSTANCES, QWEN_INSTANCES, or QWEN3_INSTANCES > 0."
         exit 1
     fi
+    
+    # --- Validate: No more than 1 instance of the same model per GPU ---
+    # Multiple instances of the same model on one GPU is suboptimal (no benefit, wastes memory)
+    NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l || echo 0)
+    if [ "$NUM_GPUS" -gt 0 ]; then
+        VALIDATION_FAILED=0
+        if [ "$GEMMA3_INSTANCES" -gt "$NUM_GPUS" ]; then
+            echo "Error: GEMMA3_INSTANCES=$GEMMA3_INSTANCES exceeds NUM_GPUS=$NUM_GPUS"
+            echo "       Running multiple instances of the same model on one GPU is suboptimal."
+            VALIDATION_FAILED=1
+        fi
+        if [ "$QWEN_INSTANCES" -gt "$NUM_GPUS" ]; then
+            echo "Error: QWEN_INSTANCES=$QWEN_INSTANCES exceeds NUM_GPUS=$NUM_GPUS"
+            echo "       Running multiple instances of the same model on one GPU is suboptimal."
+            VALIDATION_FAILED=1
+        fi
+        if [ "$QWEN3_INSTANCES" -gt "$NUM_GPUS" ]; then
+            echo "Error: QWEN3_INSTANCES=$QWEN3_INSTANCES exceeds NUM_GPUS=$NUM_GPUS"
+            echo "       Running multiple instances of the same model on one GPU is suboptimal."
+            VALIDATION_FAILED=1
+        fi
+        if [ "$WHISSENT_INSTANCES" -gt "$NUM_GPUS" ]; then
+            echo "Error: WHISSENT_INSTANCES=$WHISSENT_INSTANCES exceeds NUM_GPUS=$NUM_GPUS"
+            echo "       Running multiple instances of the same model on one GPU is suboptimal."
+            VALIDATION_FAILED=1
+        fi
+        if [ "$VALIDATION_FAILED" -eq 1 ]; then
+            echo ""
+            echo "Each model type can have at most 1 instance per GPU."
+            echo "You have $NUM_GPUS GPU(s). Adjust your instance counts accordingly."
+            exit 1
+        fi
+    fi
 fi
 
 HOST="${LOAD_BALANCER_HOST:-127.0.0.1}"
