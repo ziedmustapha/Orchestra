@@ -66,14 +66,12 @@ def concurrent_qwen_worker(task_queue: Queue, result_queue: Queue, worker_id: in
         worker_process_logger.info(f"Loading vLLM model '{MODEL_NAME}' for worker {worker_id}...")
         start_load_time = time.time()
         
+        # Minimal config - let vLLM auto-calculate: max_num_seqs, max_num_batched_tokens, KV cache
         llm = LLM(
             model=MODEL_NAME,
-            dtype=torch.bfloat16,
             trust_remote_code=True,
-            gpu_memory_utilization=0.3, # Vision models can be memory-intensive
-            max_model_len=8192,
-            max_num_seqs=8, # Adjust based on VRAM
-            enable_chunked_prefill=True
+            gpu_memory_utilization=0.5,
+            max_model_len=8192,  # Must set - default would be too high
         )
         
         tokenizer = llm.get_tokenizer()

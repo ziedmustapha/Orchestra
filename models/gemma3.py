@@ -223,22 +223,12 @@ def concurrent_model_worker(task_queue: Queue, result_queue: Queue, worker_id: i
     tokenizer = None
 
     try:
-        # Initialize vLLM with optimized settings
+        # Minimal config - let vLLM auto-calculate: max_num_seqs, max_num_batched_tokens, KV cache
         llm = LLM(
             model=MODEL_NAME,
-            dtype=torch.bfloat16,
             trust_remote_code=True,
-            gpu_memory_utilization=0.37,  # Match your 25GB target
-            max_model_len=10000,  # Match your context length
-            max_num_seqs=16,
-            max_num_batched_tokens=4056,
-            enable_prefix_caching=False,
-            enable_chunked_prefill=True,
-            compilation_config={
-                "backend": "inductor",
-                "use_cudagraph": True,
-                "cudagraph_capture_sizes": [1, 2, 4, 8, 16],
-            }
+            gpu_memory_utilization=0.37,
+            max_model_len=10000,  # Must set - default would be too high
         )
         
         # Get tokenizer for chat template formatting
@@ -502,19 +492,12 @@ class ConcurrentWorkerState:
                 torch.cuda.set_device(0)
                 logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: CUDA device set.")
 
+            # Minimal config - let vLLM auto-calculate the rest
             self.direct_llm = LLM(
                 model=MODEL_NAME,
-                dtype=torch.bfloat16,
                 trust_remote_code=True,
                 gpu_memory_utilization=0.42,
-                max_model_len=512,
-                max_num_seqs=16,
-                enable_prefix_caching=True,
-                enable_chunked_prefill=True,
-                compilation_config={
-                    "backend": "inductor",
-                    "use_cudagraph": True,
-                }
+                max_model_len=512,  # Short context for direct mode
             )
             self.direct_tokenizer = self.direct_llm.get_tokenizer()
             

@@ -34,24 +34,17 @@ try:
 except:
     VLLM_VERSION = "0.0.0"
 
-# Base configuration that works with most vLLM versions
+# Minimal vLLM config - let vLLM auto-calculate the rest
+# Only set what's necessary:
+# - gpu_memory_utilization: controls memory budget
+# - max_model_len: MUST set, otherwise defaults to model's max (32k-128k)
+# - trust_remote_code: required for Qwen models
 VLLM_CONFIG = {
-    "gpu_memory_utilization": 0.6,
-    "max_model_len": 5000,
-    "tensor_parallel_size": 1,
-    "dtype": "auto",
+    "gpu_memory_utilization": 0.5,
+    "max_model_len": 8192,  # Must set - default would be too high
     "trust_remote_code": True,
 }
-
-OPTIONAL_VLLM_CONFIG = {
-    "enforce_eager": False,
-    "enable_prefix_caching": True,
-    "disable_log_stats": True,
-    "max_num_seqs": 32,           # was 256
-    "swap_space": 4,
-    "enable_chunked_prefill": True,
-    "max_num_batched_tokens": 4096,  # was 32768 - THIS IS KEY
-}
+# vLLM auto-calculates: KV cache size, max_num_seqs, max_num_batched_tokens
 
 # --- CRITICAL: Environment variables for stability ---
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -78,42 +71,10 @@ def concurrent_vllm_qwen3_worker(task_queue: Queue, result_queue: Queue, worker_
     llm = None
     
     try:
-        # Initialize vLLM model with optimized settings
-        worker_process_logger.info(f"Loading Qwen3 with vLLM...")
+        # Initialize vLLM model - let vLLM auto-calculate optimal settings
+        worker_process_logger.info(f"Loading Qwen3 with vLLM (config: {VLLM_CONFIG})")
         
-        # Start with base configuration
-        vllm_config = VLLM_CONFIG.copy()
-        
-        # Try to add optional parameters based on what vLLM version supports
-        # We'll test each one and only add if supported
-        test_config = vllm_config.copy()
-        test_config.update(OPTIONAL_VLLM_CONFIG)
-        
-        try:
-            # Try with all optional parameters first
-            llm = LLM(model=MODEL_NAME, **test_config)
-            worker_process_logger.info(f"vLLM loaded with full optimization config")
-        except TypeError as e:
-            # If that fails, try with just base config
-            worker_process_logger.warning(f"Some vLLM parameters not supported: {e}")
-            worker_process_logger.info("Loading with base configuration...")
-            
-            # Try adding individual optional parameters
-            for key, value in OPTIONAL_VLLM_CONFIG.items():
-                test_config = vllm_config.copy()
-                test_config[key] = value
-                try:
-                    # Test if this parameter is supported
-                    from vllm import EngineArgs
-                    test_args = EngineArgs(model=MODEL_NAME, **test_config)
-                    vllm_config[key] = value
-                    worker_process_logger.info(f"  ✓ Added {key}={value}")
-                except:
-                    worker_process_logger.info(f"  ✗ Skipped {key} (not supported)")
-            
-            # Load with the final compatible configuration
-            llm = LLM(model=MODEL_NAME, **vllm_config)
-        
+        llm = LLM(model=MODEL_NAME, **VLLM_CONFIG)
         worker_process_logger.info(f"vLLM Qwen3 model loaded successfully on GPU {gpu_id}")
         
         # Get actual model config for logging
