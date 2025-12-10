@@ -259,6 +259,10 @@ start_service() {
         export WORKER_ID=$i
         export MODEL_TO_LOAD=$MODEL_TO_LOAD
         export MODELS_ON_GPU=$models_on_this_gpu  # For dynamic gpu_memory_utilization
+        # Pass through GPU_MEMORY_OVERRIDE if set (for testing different utilization levels)
+        if [ -n "$GPU_MEMORY_OVERRIDE" ]; then
+            export GPU_MEMORY_OVERRIDE=$GPU_MEMORY_OVERRIDE
+        fi
         
         # *** KEY CHANGE HERE ***
         # We now use the specific Python executable for the worker
@@ -266,7 +270,7 @@ start_service() {
         WORKER_PIDS[$i]=$!
         
         echo "Worker $i ($MODEL_TO_LOAD) started with PID ${WORKER_PIDS[$i]}"
-        sleep 90
+        sleep 45
     done
 
     echo "All workers launched. Waiting..."

@@ -44,8 +44,19 @@ os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['VLLM_USE_V1'] = '0'
 
 # --- Dynamic GPU memory allocation ---
+# GPU_MEMORY_OVERRIDE can be set to force a specific value (for testing)
 def get_dynamic_gpu_memory_utilization():
     """Calculate gpu_memory_utilization based on how many models share this GPU."""
+    # Check for explicit override (for sweet spot testing)
+    override = os.environ.get("GPU_MEMORY_OVERRIDE")
+    if override:
+        try:
+            val = float(override)
+            logger.info(f"Using GPU_MEMORY_OVERRIDE={val}")
+            return max(0.1, min(0.95, val))
+        except ValueError:
+            pass
+    
     models_on_gpu = int(os.environ.get("MODELS_ON_GPU", "1"))
     # Reserve 10% for system overhead, divide rest among models
     available_fraction = 0.90
