@@ -43,6 +43,16 @@ os.environ['MKL_NUM_THREADS'] = '1'
 # Force V0 engine - V1 engine (vLLM 0.8.x default) has stricter memory checks
 os.environ['VLLM_USE_V1'] = '0'
 
+# --- Dynamic GPU memory allocation ---
+def get_dynamic_gpu_memory_utilization():
+    """Calculate gpu_memory_utilization based on how many models share this GPU."""
+    models_on_gpu = int(os.environ.get("MODELS_ON_GPU", "1"))
+    # Reserve 10% for system overhead, divide rest among models
+    available_fraction = 0.90
+    utilization = available_fraction / models_on_gpu
+    # Clamp between 0.1 and 0.9 for safety
+    return max(0.1, min(0.9, utilization))
+
 # --- Session histories (in-memory, per-worker, for TEXT-ONLY chats) ---
 session_histories: dict[str, list[dict]] = {}
 
@@ -224,10 +234,12 @@ def concurrent_model_worker(task_queue: Queue, result_queue: Queue, worker_id: i
 
     try:
         # Minimal config - let vLLM auto-calculate: max_num_seqs, max_num_batched_tokens, KV cache
+        gpu_mem_util = get_dynamic_gpu_memory_utilization()
+        worker_process_logger.info(f"Using gpu_memory_utilization={gpu_mem_util:.2f} (MODELS_ON_GPU={os.environ.get('MODELS_ON_GPU', '1')})")
         llm = LLM(
             model=MODEL_NAME,
             trust_remote_code=True,
-            gpu_memory_utilization=0.37,
+            gpu_memory_utilization=gpu_mem_util,
             max_model_len=10000,  # Must set - default would be too high
         )
         
@@ -493,10 +505,12 @@ class ConcurrentWorkerState:
                 logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: CUDA device set.")
 
             # Minimal config - let vLLM auto-calculate the rest
+            gpu_mem_util = get_dynamic_gpu_memory_utilization()
+            logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Using gpu_memory_utilization={gpu_mem_util:.2f}")
             self.direct_llm = LLM(
                 model=MODEL_NAME,
                 trust_remote_code=True,
-                gpu_memory_utilization=0.42,
+                gpu_memory_utilization=gpu_mem_util,
                 max_model_len=512,  # Short context for direct mode
             )
             self.direct_tokenizer = self.direct_llm.get_tokenizer()
@@ -507,6 +521,14 @@ class ConcurrentWorkerState:
 
     def cleanup(self):
         logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Cleaning up Gemma WorkerState...")
+        
+        # Stop the result router thread in the wrapper first
+        if self.chat_model_instance and hasattr(self.chat_model_instance, 'stop'):
+            try:
+                self.chat_model_instance.stop()
+            except Exception as e:
+                logger.error(f"Error stopping result router: {e}")
+        
         if self.enable_sub_process_model and self.model_worker_process_handle:
             if self.model_worker_process_handle.is_alive():
                 logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Signaling model sub-process to shutdown...")
@@ -547,7 +569,7 @@ class ConcurrentWorkerState:
 
 # --- Model Wrapper Classes ---
 class ConcurrentModelWrapper:
-    """Wrapper for sub-process model communication."""
+    """Wrapper for sub-process model communication with proper concurrent request handling."""
     def __init__(self, task_q: Queue, result_q: Queue, gunicorn_id: int, sub_proc_id: str):
         self.task_queue = task_q
         self.result_queue = result_q
@@ -555,6 +577,48 @@ class ConcurrentModelWrapper:
         self.sub_process_id = sub_proc_id
         self.request_counter = 0
         self.counter_lock = threading.Lock()
+        
+        # Concurrent request handling
+        self._pending_tasks: Dict[str, Dict] = {}  # task_id -> {"event": Event, "result": tuple}
+        self._pending_lock = threading.Lock()
+        self._router_running = True
+        self._result_router_thread = threading.Thread(
+            target=self._result_router,
+            daemon=True,
+            name=f"gemma_result_router_{gunicorn_id}"
+        )
+        self._result_router_thread.start()
+        logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Result router thread started for concurrent requests")
+    
+    def _result_router(self):
+        """Background thread that routes results to pending tasks."""
+        while self._router_running:
+            try:
+                result = self.result_queue.get(timeout=1.0)
+                if result is None:
+                    continue
+                
+                res_task_id = result[0] if isinstance(result, tuple) else None
+                if res_task_id is None:
+                    logger.warning(f"Received result without task_id")
+                    continue
+                
+                with self._pending_lock:
+                    if res_task_id in self._pending_tasks:
+                        self._pending_tasks[res_task_id]["result"] = result
+                        self._pending_tasks[res_task_id]["event"].set()
+                    else:
+                        logger.warning(f"Received result for unknown task_id: {res_task_id}")
+                        
+            except Exception as e:
+                if self._router_running and "Empty" not in str(type(e).__name__):
+                    logger.debug(f"Result router: {e}")
+    
+    def stop(self):
+        """Stop the result router thread."""
+        self._router_running = False
+        if self._result_router_thread and self._result_router_thread.is_alive():
+            self._result_router_thread.join(timeout=5)
 
     def invoke(self, task_payload: Dict[str, Any], task_type: str, **kwargs) -> AIMessage:
         has_images = task_type == "multimodal" and "images" in task_payload and task_payload["images"]
@@ -575,26 +639,41 @@ class ConcurrentModelWrapper:
             corr_id = get_correlation_id()
         except Exception:
             corr_id = None
-        self.task_queue.put((current_task_id, task_payload, req_max_new_tokens, task_type, corr_id))
         
-        result_timeout_seconds = 360000
-        start_wait = time.time()
+        # Register this task for result routing
+        event = threading.Event()
+        with self._pending_lock:
+            self._pending_tasks[current_task_id] = {"event": event, "result": None}
         
-        while (time.time() - start_wait) < result_timeout_seconds:
-            try:
-                res_task_id, response_content, error_msg, _, _ = self.result_queue.get(timeout=1.0)
-                if res_task_id == current_task_id:
-                    if error_msg:
-                        logger.error(f"[{current_task_id}] Model sub-process error: {error_msg}")
-                        raise Exception(f"Model generation error: {error_msg}")
-                    logger.debug(f"[{current_task_id}] Received response from sub-process.")
-                    return AIMessage(content=response_content)
-            except mp.queues.Empty:
-                continue
-        
-        timeout_msg = f"Task {current_task_id} timed out after {result_timeout_seconds}s."
-        logger.error(timeout_msg)
-        raise TimeoutError(timeout_msg)
+        try:
+            self.task_queue.put((current_task_id, task_payload, req_max_new_tokens, task_type, corr_id))
+            
+            # Wait for result (the result router thread will signal us)
+            result_timeout_seconds = 600  # 10 minutes
+            if not event.wait(timeout=result_timeout_seconds):
+                raise TimeoutError(f"Task {current_task_id} timed out after {result_timeout_seconds}s.")
+            
+            # Get result
+            with self._pending_lock:
+                task_info = self._pending_tasks.pop(current_task_id, None)
+            
+            if task_info is None or task_info["result"] is None:
+                raise Exception(f"Task {current_task_id} result not found")
+            
+            res_task_id, response_content, error_msg, _, _ = task_info["result"]
+            
+            if error_msg:
+                logger.error(f"[{current_task_id}] Model sub-process error: {error_msg}")
+                raise Exception(f"Model generation error: {error_msg}")
+            
+            logger.debug(f"[{current_task_id}] Received response from sub-process.")
+            return AIMessage(content=response_content)
+            
+        except Exception as e:
+            # Clean up pending task on error
+            with self._pending_lock:
+                self._pending_tasks.pop(current_task_id, None)
+            raise
 
 class DirectVLLMWrapper:
     """Wrapper for direct vLLM usage."""

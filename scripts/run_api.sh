@@ -207,13 +207,32 @@ start_service() {
         echo "No GPUs detected or nvidia-smi not found. Skipping MPS setup."
     fi
 
+    # --- Calculate models per GPU for dynamic memory allocation ---
+    # Count how many models will be loaded on each GPU
+    if [ "$NUM_GPUS" -gt 0 ]; then
+        declare -a MODELS_PER_GPU
+        for ((g=0; g<$NUM_GPUS; g++)); do
+            MODELS_PER_GPU[$g]=0
+        done
+        for ((i=0; i<$TOTAL_WORKERS; i++)); do
+            gpu_id=$((i % NUM_GPUS))
+            MODELS_PER_GPU[$gpu_id]=$((MODELS_PER_GPU[$gpu_id] + 1))
+        done
+        echo "Models per GPU distribution:"
+        for ((g=0; g<$NUM_GPUS; g++)); do
+            echo "  GPU $g: ${MODELS_PER_GPU[$g]} model(s)"
+        done
+    fi
+
     echo "Starting $TOTAL_WORKERS total worker processes..."
     for ((i=0; i<$TOTAL_WORKERS; i++)); do
         worker_port=$((WORKER_BASE_PORT + i))
         if [ "$NUM_GPUS" -gt 0 ]; then
             gpu_id=$((i % NUM_GPUS))
+            models_on_this_gpu=${MODELS_PER_GPU[$gpu_id]}
         else
             gpu_id=""
+            models_on_this_gpu=1
         fi
         
         if [ $i -lt $GEMMA3_INSTANCES ]; then
@@ -230,7 +249,7 @@ start_service() {
             PYTHON_EXEC_FOR_WORKER=$WHISSENT_PYTHON_EXEC
         fi
 
-        echo "Starting worker $i ($MODEL_TO_LOAD) on port $worker_port (GPU $gpu_id) using ${PYTHON_EXEC_FOR_WORKER}..."
+        echo "Starting worker $i ($MODEL_TO_LOAD) on port $worker_port (GPU $gpu_id, sharing with $models_on_this_gpu model(s)) using ${PYTHON_EXEC_FOR_WORKER}..."
         
         if [ "$NUM_GPUS" -gt 0 ]; then
             export CUDA_VISIBLE_DEVICES=$gpu_id
@@ -239,6 +258,7 @@ start_service() {
         fi
         export WORKER_ID=$i
         export MODEL_TO_LOAD=$MODEL_TO_LOAD
+        export MODELS_ON_GPU=$models_on_this_gpu  # For dynamic gpu_memory_utilization
         
         # *** KEY CHANGE HERE ***
         # We now use the specific Python executable for the worker

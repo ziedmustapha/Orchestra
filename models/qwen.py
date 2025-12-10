@@ -44,6 +44,16 @@ os.environ['MKL_NUM_THREADS'] = '1'
 # Force V0 engine - V1 engine (vLLM 0.8.x default) has stricter memory checks
 os.environ['VLLM_USE_V1'] = '0'
 
+# --- Dynamic GPU memory allocation ---
+def get_dynamic_gpu_memory_utilization():
+    """Calculate gpu_memory_utilization based on how many models share this GPU."""
+    models_on_gpu = int(os.environ.get("MODELS_ON_GPU", "1"))
+    # Reserve 10% for system overhead, divide rest among models
+    available_fraction = 0.90
+    utilization = available_fraction / models_on_gpu
+    # Clamp between 0.1 and 0.9 for safety
+    return max(0.1, min(0.9, utilization))
+
 # Qwen is typically stateless for vision tasks, so no session history needed.
 
 # --- Concurrent Qwen worker (vLLM version) ---
@@ -67,10 +77,12 @@ def concurrent_qwen_worker(task_queue: Queue, result_queue: Queue, worker_id: in
         start_load_time = time.time()
         
         # Minimal config - let vLLM auto-calculate: max_num_seqs, max_num_batched_tokens, KV cache
+        gpu_mem_util = get_dynamic_gpu_memory_utilization()
+        worker_process_logger.info(f"Using gpu_memory_utilization={gpu_mem_util:.2f} (MODELS_ON_GPU={os.environ.get('MODELS_ON_GPU', '1')})")
         llm = LLM(
             model=MODEL_NAME,
             trust_remote_code=True,
-            gpu_memory_utilization=0.5,
+            gpu_memory_utilization=gpu_mem_util,
             max_model_len=8192,  # Must set - default would be too high
         )
         
@@ -259,6 +271,14 @@ class QwenWorkerState:
 
     def cleanup(self):
         logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Cleaning up Qwen WorkerState...")
+        
+        # Stop the result router thread in the wrapper first
+        if self.chat_model_instance and hasattr(self.chat_model_instance, 'stop'):
+            try:
+                self.chat_model_instance.stop()
+            except Exception as e:
+                logger.error(f"Error stopping result router: {e}")
+        
         if self.model_worker_process_handle and self.model_worker_process_handle.is_alive():
             logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Signaling Qwen sub-process to shutdown...")
             try:
