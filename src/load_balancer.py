@@ -289,6 +289,10 @@ class LoadBalancer:
             logger.error(f"Error forwarding to worker {worker.worker_id}: {e}", exc_info=True)
             raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with worker {worker.worker_id}.")
 
+    # Add this to WorkerInfo.__init__
+    # Models that support internal concurrent batching (vLLM AsyncLLMEngine)
+    CONCURRENT_MODELS = {"qwen3", "qwen"}  # Add other models as you migrate them
+
     async def process_request(self, request_data: dict) -> dict:
         model_name = request_data.get("model_name")
         if not model_name:
@@ -298,27 +302,57 @@ class LoadBalancer:
         if not worker:
             raise HTTPException(status_code=503, detail=f"No workers available for model '{model_name}'.")
 
+        # Check if this model supports concurrent processing
+        supports_concurrent = model_name in {"qwen3", "qwen"}  # Models using AsyncLLMEngine
+        
+        if supports_concurrent:
+            # Forward immediately - let vLLM handle batching internally
+            logger.info(f"Forwarding request for '{model_name}' directly to worker {worker.worker_id} (concurrent mode)")
+            t0 = time.perf_counter()
+            try:
+                result = await self.forward_request(worker, request_data)
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                worker.latencies_ms.append(dt_ms)
+                worker.last_duration_ms = dt_ms
+                worker.requests += 1
+                worker.success += 1
+                self.total_requests += 1
+                self.total_success += 1
+                if model_name in self.per_model_metrics:
+                    self.per_model_metrics[model_name]["requests"] += 1
+                    self.per_model_metrics[model_name]["success"] += 1
+                result["lb_latency_ms"] = round(dt_ms, 1)
+                result["lb_queue_at_dispatch"] = 0
+                return result
+            except Exception as e:
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                worker.last_duration_ms = dt_ms
+                worker.requests += 1
+                worker.errors += 1
+                worker.last_error = str(e)
+                self.total_requests += 1
+                self.total_errors += 1
+                if model_name in self.per_model_metrics:
+                    self.per_model_metrics[model_name]["requests"] += 1
+                    self.per_model_metrics[model_name]["errors"] += 1
+                raise
+        
+        # Original queuing logic for models that don't support concurrent batching
         future = asyncio.Future()
         async with worker.lock:
             if worker.is_busy:
-                # Queue the request
                 worker.queue.append((request_data, future))
                 logger.info(f"Queuing request for '{model_name}' on worker {worker.worker_id} (queue size: {len(worker.queue)})")
-                # The task will be picked up by the worker when it's free
             else:
-                # Process immediately
                 worker.is_busy = True
-                future.set_result(True) # Signal to proceed
+                future.set_result(True)
                 logger.info(f"Routing request for '{model_name}' directly to free worker {worker.worker_id}")
 
-        # Wait for our turn
         await future
-        # Metrics: mark dispatch state
         t0 = time.perf_counter()
         queue_at_dispatch = len(worker.queue)
         try:
             result = await self.forward_request(worker, request_data)
-            # Success path metrics
             dt_ms = (time.perf_counter() - t0) * 1000.0
             worker.latencies_ms.append(dt_ms)
             worker.last_duration_ms = dt_ms
@@ -329,12 +363,10 @@ class LoadBalancer:
             if model_name in self.per_model_metrics:
                 self.per_model_metrics[model_name]["requests"] += 1
                 self.per_model_metrics[model_name]["success"] += 1
-            # annotate response
             result["lb_latency_ms"] = round(dt_ms, 1)
             result["lb_queue_at_dispatch"] = queue_at_dispatch
             return result
         except Exception as e:
-            # Error path metrics
             dt_ms = (time.perf_counter() - t0) * 1000.0
             worker.last_duration_ms = dt_ms
             worker.requests += 1
@@ -347,16 +379,12 @@ class LoadBalancer:
                 self.per_model_metrics[model_name]["errors"] += 1
             raise
         finally:
-            # This block runs after the request is completed or fails
             async with worker.lock:
-                # If there are items in the queue, start processing the next one
                 if worker.queue:
                     next_request_data, next_future = worker.queue.popleft()
-                    # The worker remains busy for the next task
                     logger.info(f"Dequeuing request for worker {worker.worker_id}")
-                    next_future.set_result(True) # Allow the next waiting task to proceed
+                    next_future.set_result(True)
                 else:
-                    # No more tasks, worker is now free
                     worker.is_busy = False
 
     def get_status(self) -> dict:
