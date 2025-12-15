@@ -33,6 +33,26 @@ ASR_MODEL_ID = "openai/whisper-large-v3"
 EMO_MODEL_ID = "Lajavaness/wav2vec2-lg-xlsr-fr-speech-emotion-recognition"
 
 
+def get_whissent_config() -> Dict[str, Any]:
+    """
+    Get WhisSent configuration from environment variables.
+    Allows tuning without code changes for optimization.
+    
+    Environment variables:
+        WHISSENT_CHUNK_LENGTH_S: Audio chunk length for ASR (default: 30.0)
+        WHISSENT_BATCH_SIZE: Batch size for ASR processing (default: 24)
+        WHISSENT_USE_FLASH_ATTN: Use Flash Attention 2 if available (default: true)
+        WHISSENT_TORCH_COMPILE: Use torch.compile for faster inference (default: false)
+    """
+    config = {
+        "chunk_length_s": float(os.environ.get("WHISSENT_CHUNK_LENGTH_S", "30.0")),
+        "batch_size": int(os.environ.get("WHISSENT_BATCH_SIZE", "24")),
+        "use_flash_attn": os.environ.get("WHISSENT_USE_FLASH_ATTN", "true").lower() in ("true", "1", "yes"),
+        "torch_compile": os.environ.get("WHISSENT_TORCH_COMPILE", "false").lower() in ("true", "1", "yes"),
+    }
+    return config
+
+
 def _write_temp_audio_file(audio_spec: Dict[str, Any]) -> Tuple[str, Optional[str]]:
     """Materialize incoming audio to a temporary file path.
     Supports formats:
@@ -113,15 +133,41 @@ def concurrent_whissent_worker(task_queue: Queue, result_queue: Queue, worker_id
 
     try:
         t0 = time.time()
-        # Initialize pipelines
+        # Get optimized config
+        ws_config = get_whissent_config()
+        wlog.info(
+            f"WhisSent config: chunk_length_s={ws_config['chunk_length_s']}, "
+            f"batch_size={ws_config['batch_size']}, "
+            f"use_flash_attn={ws_config['use_flash_attn']}, "
+            f"torch_compile={ws_config['torch_compile']}"
+        )
+        
+        # Initialize pipelines with optimized settings
         wlog.info("Loading Whisper ASR pipeline...")
+        model_kwargs = {"torch_dtype": dtype}
+        if ws_config["use_flash_attn"]:
+            try:
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+            except Exception:
+                wlog.warning("Flash Attention 2 not available, using default attention")
+        
         asr_pipe = pipeline(
             task="automatic-speech-recognition",
             model=ASR_MODEL_ID,
             device=device,
-            model_kwargs={"torch_dtype": dtype},
-            chunk_length_s=30.0,
+            model_kwargs=model_kwargs,
+            chunk_length_s=ws_config["chunk_length_s"],
+            batch_size=ws_config["batch_size"],
         )
+        
+        # Optional torch.compile for faster inference
+        if ws_config["torch_compile"] and hasattr(torch, "compile"):
+            try:
+                wlog.info("Applying torch.compile to ASR model...")
+                asr_pipe.model = torch.compile(asr_pipe.model, mode="reduce-overhead")
+            except Exception as e:
+                wlog.warning(f"torch.compile failed: {e}")
+        
         wlog.info("Loading FR Emotion classification pipeline...")
         emo_pipe = pipeline(
             task="audio-classification",

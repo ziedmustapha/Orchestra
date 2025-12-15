@@ -1,8 +1,9 @@
-# gemma3.py - vLLM version
+# gemma3.py - vLLM AsyncLLMEngine version with batching
 # Author: Zied Mustapha
-from vllm import LLM, SamplingParams
-from vllm.inputs import TokensPrompt
-from transformers import AutoTokenizer  # Still need for tokenization
+from vllm import SamplingParams
+from vllm.engine.async_llm_engine import AsyncLLMEngine
+from vllm.engine.arg_utils import AsyncEngineArgs
+from transformers import AutoTokenizer
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 import torch
@@ -10,6 +11,7 @@ import os
 import asyncio
 import multiprocessing as mp
 from multiprocessing import Process, Queue
+import queue
 import time
 import logging
 import threading
@@ -58,11 +60,43 @@ def get_dynamic_gpu_memory_utilization():
             pass
     
     models_on_gpu = int(os.environ.get("MODELS_ON_GPU", "1"))
-    # Reserve 10% for system overhead, divide rest among models
-    available_fraction = 0.90
+    available_fraction = 0.95
     utilization = available_fraction / models_on_gpu
-    # Clamp between 0.1 and 0.9 for safety
-    return max(0.1, min(0.9, utilization))
+    return max(0.1, min(0.95, utilization))
+
+
+def get_vllm_engine_config() -> Dict[str, Any]:
+    """
+    Get vLLM engine configuration from environment variables.
+    Allows tuning without code changes for H100 optimization.
+    
+    Note: Gemma3 (12B) is a DENSE model (not MoE), so no MoE config needed.
+    
+    Environment variables:
+        GEMMA_MAX_MODEL_LEN: Maximum sequence length (default: 10000)
+        GEMMA_MAX_NUM_BATCHED_TOKENS: Max tokens per scheduler step (default: 16384)
+        GEMMA_MAX_NUM_SEQS: Max concurrent sequences (default: 256)
+        GEMMA_ENABLE_CHUNKED_PREFILL: Enable chunked prefill (default: true)
+        GEMMA_ENABLE_PREFIX_CACHING: Enable prefix/prompt caching (default: false)
+    """
+    config = {
+        "max_model_len": int(os.environ.get("GEMMA_MAX_MODEL_LEN", "10000")),
+        "max_num_batched_tokens": int(os.environ.get("GEMMA_MAX_NUM_BATCHED_TOKENS", "16384")),
+        "max_num_seqs": int(os.environ.get("GEMMA_MAX_NUM_SEQS", "256")),
+        "enable_chunked_prefill": os.environ.get("GEMMA_ENABLE_CHUNKED_PREFILL", "true").lower() in ("true", "1", "yes"),
+        "enable_prefix_caching": os.environ.get("GEMMA_ENABLE_PREFIX_CACHING", "false").lower() in ("true", "1", "yes"),
+        "coalesce_ms": float(os.environ.get("GEMMA_COALESCE_MS", "5")),
+    }
+    return config
+
+
+def _blocking_queue_get(q: Queue, timeout: float = 0.1):
+    """Blocking get with timeout for async integration."""
+    try:
+        return q.get(timeout=timeout)
+    except queue.Empty:
+        return "EMPTY_SENTINEL"
+
 
 # --- Session histories (in-memory, per-worker, for TEXT-ONLY chats) ---
 session_histories: dict[str, list[dict]] = {}
@@ -211,226 +245,279 @@ def process_image_internal(image_input: Union[str, Image.Image, bytes, Dict[str,
         worker_logger.error(f"Error processing image input '{str(image_input)[:100]}...': {e}", exc_info=True)
         raise
     
-# --- Concurrent model worker (vLLM version) ---
+# --- Async request processing (like qwen3.py) ---
+async def process_single_request(
+    engine: AsyncLLMEngine,
+    task: Dict[str, Any],
+    result_queue: Queue,
+    worker_id: int,
+    wlog: logging.Logger
+):
+    """Process a single request - vLLM batches these internally at the token level."""
+    task_id = task.get("task_id", str(uuid.uuid4()))
+    correlation_id = task.get("correlation_id")
+    task_type = task.get("task_type", "text")
+    task_payload = task.get("payload", {})
+    req_max_new_tokens = task.get("max_new_tokens", DEFAULT_MAX_NEW_TOKENS)
+    
+    if correlation_id:
+        try:
+            set_correlation_id(correlation_id)
+        except Exception:
+            pass
+    
+    try:
+        # Build prompt based on task type
+        if task_type == "multimodal":
+            user_text = task_payload.get("user_text", "")
+            image_inputs_raw = task_payload.get("images", [])
+            pdf_page_to_use = task_payload.get("pdf_page_to_use")
+            
+            # Process images
+            processed_images = []
+            if image_inputs_raw:
+                for idx, img_item_raw in enumerate(image_inputs_raw):
+                    try:
+                        processed_img_or_list = process_image_internal(img_item_raw, wlog)
+                        if isinstance(processed_img_or_list, list):
+                            if processed_img_or_list:
+                                page_idx = pdf_page_to_use if pdf_page_to_use is not None and 0 <= pdf_page_to_use < len(processed_img_or_list) else 0
+                                processed_images.append(processed_img_or_list[page_idx])
+                        else:
+                            processed_images.append(processed_img_or_list)
+                    except Exception as e:
+                        wlog.error(f"[{task_id}] Failed to process image {idx}: {e}")
+            
+            # Build chat template
+            user_content = [{"type": "image"} for _ in processed_images]
+            user_content.append({"type": "text", "text": user_text})
+            messages = [{"role": "user", "content": user_content}]
+            
+            # Get tokenizer from engine
+            tokenizer = await engine.get_tokenizer()
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            
+            inputs = {
+                "prompt": prompt,
+                "multi_modal_data": {"image": processed_images[0] if len(processed_images) == 1 else processed_images}
+            }
+        else:
+            # Text task
+            langchain_messages = task_payload.get("langchain_messages", [])
+            chat_history = []
+            for msg in langchain_messages:
+                if isinstance(msg, HumanMessage):
+                    role = "user"
+                elif isinstance(msg, AIMessage):
+                    role = "model"
+                elif isinstance(msg, SystemMessage):
+                    role = "system"
+                else:
+                    continue
+                
+                # Gemma3 requires alternating roles - merge consecutive same-role messages
+                if chat_history and chat_history[-1]["role"] == role:
+                    chat_history[-1]["content"] += "\n" + msg.content
+                else:
+                    chat_history.append({"role": role, "content": msg.content})
+            
+            # Ensure we have at least one user message
+            if not chat_history or chat_history[-1]["role"] != "user":
+                wlog.warning(f"[{task_id}] Chat history doesn't end with user message, adding empty user turn")
+                if not any(m["role"] == "user" for m in chat_history):
+                    chat_history.append({"role": "user", "content": "Hello"})
+            
+            tokenizer = await engine.get_tokenizer()
+            prompt = tokenizer.apply_chat_template(chat_history, tokenize=False, add_generation_prompt=True)
+            inputs = prompt
+        
+        sampling_params = SamplingParams(
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=req_max_new_tokens,
+            repetition_penalty=1.15,
+        )
+        
+        request_id = f"gemma-{task_id}"
+        gen_start = time.time()
+        
+        # Collect output via async generator
+        final_output = None
+        async for output in engine.generate(inputs, sampling_params, request_id):
+            final_output = output
+        
+        gen_duration = time.time() - gen_start
+        
+        if final_output and final_output.outputs:
+            response_text = final_output.outputs[0].text.strip()
+            num_tokens = len(final_output.outputs[0].token_ids)
+            tps = num_tokens / gen_duration if gen_duration > 0 else 0
+            wlog.info(f"[{task_id}] Completed in {gen_duration:.2f}s, {num_tokens} tokens ({tps:.1f} tok/s)")
+            result_queue.put((task_id, response_text, None, req_max_new_tokens, task_type))
+        else:
+            result_queue.put((task_id, None, "No output generated", req_max_new_tokens, task_type))
+            
+    except Exception as e:
+        wlog.error(f"[{task_id}] Error: {e}", exc_info=True)
+        result_queue.put((task_id, None, str(e), req_max_new_tokens, task_type))
+    finally:
+        try:
+            clear_correlation_id()
+        except Exception:
+            pass
+
+
+async def request_dispatcher(
+    task_queue: Queue,
+    engine: AsyncLLMEngine,
+    result_queue: Queue,
+    worker_id: int,
+    wlog: logging.Logger,
+    coalesce_ms: float = 5.0
+):
+    """Dispatch requests to vLLM with coalescing for better batching."""
+    loop = asyncio.get_event_loop()
+    active_tasks: set = set()
+    
+    wlog.info(f"Request dispatcher started - burst-aware mode (coalesce={coalesce_ms}ms)")
+    
+    def cleanup_done_tasks():
+        done = {t for t in active_tasks if t.done()}
+        for t in done:
+            try:
+                t.result()
+            except Exception as e:
+                wlog.error(f"Task exception: {e}")
+        active_tasks.difference_update(done)
+    
+    while True:
+        try:
+            cleanup_done_tasks()
+            
+            # Wait for at least one task
+            task = await loop.run_in_executor(None, _blocking_queue_get, task_queue, 0.05)
+            
+            if task == "EMPTY_SENTINEL":
+                continue
+            
+            if task is None:
+                wlog.info("Shutdown signal received")
+                break
+            
+            # Coalescing window
+            if coalesce_ms > 0:
+                await asyncio.sleep(coalesce_ms / 1000.0)
+            
+            # Collect batch
+            batch = [task]
+            while len(batch) < 512:
+                try:
+                    t = task_queue.get_nowait()
+                    if t is None:
+                        task_queue.put(None)
+                        break
+                    batch.append(t)
+                except queue.Empty:
+                    break
+            
+            # Submit all to vLLM
+            for t in batch:
+                coro = process_single_request(engine, t, result_queue, worker_id, wlog)
+                async_task = asyncio.create_task(coro)
+                active_tasks.add(async_task)
+            
+            if len(batch) > 1:
+                wlog.info(f"Dispatched burst of {len(batch)} tasks - {len(active_tasks)} active")
+            
+            await asyncio.sleep(0)
+            
+        except Exception as e:
+            wlog.error(f"Dispatcher error: {e}", exc_info=True)
+            continue
+    
+    if active_tasks:
+        wlog.info(f"Waiting for {len(active_tasks)} active tasks...")
+        await asyncio.gather(*active_tasks, return_exceptions=True)
+    
+    wlog.info("Request dispatcher stopped")
+
+
+# --- Concurrent model worker (AsyncLLMEngine version) ---
 def concurrent_model_worker(task_queue: Queue, result_queue: Queue, worker_id: int, gpu_id: str, process_id_str: str):
-    # Set environment for vLLM subprocess
     os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
     os.environ['CUDA_VISIBLE_DEVICES'] = gpu_id
+    os.environ['VLLM_USE_V1'] = '0'
     
-    # Structured JSON logging for the sub-process (separate file per subproc)
     os.environ.setdefault("ROLE", "worker_subproc")
     os.environ.setdefault("SERVICE_NAME", "orchestra")
     setup_logging_for_process(f"workerproc_{worker_id}_gemma3_{process_id_str}.jsonl")
-    worker_process_logger = logging.getLogger(f"gemma_worker_proc_{process_id_str}")
+    wlog = logging.getLogger(f"gemma_worker_proc_{process_id_str}")
 
-    worker_process_logger.info(f"Model worker {worker_id} (PID: {os.getpid()}, process_id_str: {process_id_str}) starting on assigned GPU {gpu_id}")
+    wlog.info(f"Gemma3 AsyncLLMEngine worker {worker_id} (PID: {os.getpid()}) starting on GPU {gpu_id}")
     
-    # Already set above: os.environ['CUDA_VISIBLE_DEVICES'] = gpu_id
     if torch.cuda.is_available():
         try:
             torch.cuda.set_device(0)
-            worker_process_logger.info(f"CUDA device set to 'cuda:0' (maps to physical GPU {gpu_id}). PyTorch CUDA version: {torch.version.cuda}")
+            wlog.info(f"CUDA device set to cuda:0 (physical GPU {gpu_id})")
         except Exception as e:
-            worker_process_logger.error(f"Error setting CUDA device: {e}", exc_info=True)
+            wlog.error(f"CUDA setup failed: {e}", exc_info=True)
             result_queue.put(("ERROR_INIT", None, f"CUDA setup failed: {e}", None, None))
             return
-    else:
-        worker_process_logger.warning(f"CUDA not available.")
-
-    worker_process_logger.info(f"Loading vLLM model '{MODEL_NAME}' for worker {worker_id}...")
-    start_load_time = time.time()
     
-    llm = None
-    tokenizer = None
-
+    engine = None
+    
     try:
-        # Minimal config - let vLLM auto-calculate: max_num_seqs, max_num_batched_tokens, KV cache
+        vllm_config = get_vllm_engine_config()
         gpu_mem_util = get_dynamic_gpu_memory_utilization()
-        worker_process_logger.info(f"Using gpu_memory_utilization={gpu_mem_util:.2f} (MODELS_ON_GPU={os.environ.get('MODELS_ON_GPU', '1')})")
-        llm = LLM(
+        wlog.info(
+            f"vLLM config: gpu_mem={gpu_mem_util:.2f}, "
+            f"max_model_len={vllm_config['max_model_len']}, "
+            f"max_num_batched_tokens={vllm_config['max_num_batched_tokens']}, "
+            f"max_num_seqs={vllm_config['max_num_seqs']}, "
+            f"chunked_prefill={vllm_config['enable_chunked_prefill']}, "
+            f"coalesce_ms={vllm_config['coalesce_ms']}"
+        )
+        
+        engine_args = AsyncEngineArgs(
             model=MODEL_NAME,
             trust_remote_code=True,
             gpu_memory_utilization=gpu_mem_util,
-            max_model_len=10000,  # Must set - default would be too high
+            max_model_len=vllm_config["max_model_len"],
+            max_num_batched_tokens=vllm_config["max_num_batched_tokens"],
+            max_num_seqs=vllm_config["max_num_seqs"],
+            enable_chunked_prefill=vllm_config["enable_chunked_prefill"],
+            enable_prefix_caching=vllm_config["enable_prefix_caching"],
+            disable_log_requests=False,
+            enforce_eager=False,
+            dtype="auto",
         )
         
-        # Get tokenizer for chat template formatting
-        tokenizer = llm.get_tokenizer()
-        worker_process_logger.info(f"vLLM model loaded successfully.")
-        
-        if tokenizer.pad_token_id is None:
-            if tokenizer.eos_token_id is not None:
-                tokenizer.pad_token_id = tokenizer.eos_token_id
-            else:
-                tokenizer.pad_token_id = 0
-        
-        load_duration = time.time() - start_load_time
-        worker_process_logger.info(f"Model loaded successfully in {load_duration:.2f}s for worker {worker_id}.")
+        engine = AsyncLLMEngine.from_engine_args(engine_args)
+        wlog.info(f"AsyncLLMEngine loaded successfully on GPU {gpu_id}")
         
     except Exception as e:
-        load_duration = time.time() - start_load_time
-        worker_process_logger.error(f"FAILED to load vLLM model for worker {worker_id} after {load_duration:.2f}s: {e}", exc_info=True)
+        wlog.error(f"Failed to load AsyncLLMEngine: {e}", exc_info=True)
         result_queue.put(("ERROR_INIT", None, f"Model load failed: {e}", None, None))
         return
     
     result_queue.put(("READY", None, None, None, None))
-    worker_process_logger.info(f"Worker {worker_id} is READY and listening for tasks.")
+    wlog.info(f"Worker {worker_id} is READY")
     
-    while True:
-        try:
-            task = task_queue.get()
-            if task is None:
-                worker_process_logger.info(f"Worker {worker_id} received shutdown signal.")
-                break
-            # Unpack with backward compatibility (4- or 5-tuple)
-            if isinstance(task, tuple) and len(task) >= 4:
-                if len(task) == 5:
-                    task_id, task_payload, req_max_new_tokens, task_type, corr_id = task
-                else:
-                    task_id, task_payload, req_max_new_tokens, task_type = task
-                    corr_id = None
-            else:
-                # Unexpected format
-                worker_process_logger.error(f"Unexpected task format: {type(task)} {task}")
-                continue
-            # Set correlation id for this task's logs
-            if corr_id:
-                try:
-                    set_correlation_id(corr_id)
-                except Exception:
-                    pass
-            # Ensure max tokens is a valid positive int
-            default_for_task = DEFAULT_MAX_NEW_TOKENS_MULTI if task_type == "multimodal" else DEFAULT_MAX_NEW_TOKENS
-            req_max_new_tokens = _ensure_int_tokens(req_max_new_tokens, default_for_task, worker_process_logger, "max_new_tokens")
-            worker_process_logger.info(f"Worker {worker_id} processing task_id: {task_id} (type: {task_type}) with max_new_tokens={req_max_new_tokens}")
-            
-            inference_start_time = time.time()
-            
-            if task_type == "multimodal":
-                # vLLM multimodal support
-                user_text = task_payload.get("user_text", "")
-                image_inputs_raw = task_payload.get("images", [])
-                pdf_page_to_use = task_payload.get("pdf_page_to_use")
-
-                # Process images
-                processed_images = []
-                if image_inputs_raw:
-                    worker_process_logger.info(f"[{task_id}] Processing {len(image_inputs_raw)} image items.")
-                    
-                    for idx, img_item_raw in enumerate(image_inputs_raw):
-                        try:
-                            processed_img_or_list = process_image_internal(img_item_raw, worker_process_logger)
-                            if isinstance(processed_img_or_list, list):  # PDF
-                                if not processed_img_or_list:
-                                    continue
-                                page_idx = 0
-                                if pdf_page_to_use is not None and 0 <= pdf_page_to_use < len(processed_img_or_list):
-                                    page_idx = pdf_page_to_use
-                                processed_images.append(processed_img_or_list[page_idx])
-                            else:
-                                processed_images.append(processed_img_or_list)
-                        except Exception as e:
-                            worker_process_logger.error(f"[{task_id}] Failed to process image {idx}: {e}")
-
-                # Build messages for chat template
-                messages = []
-                user_content = []
-                
-                # Add images first
-                for img in processed_images:
-                    user_content.append({"type": "image"})
-                
-                # Add text
-                user_content.append({"type": "text", "text": user_text})
-                
-                messages.append({"role": "user", "content": user_content})
-                
-                # Apply chat template to get the prompt with proper image placeholders
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True
-                )
-                
-                worker_process_logger.info(f"[{task_id}] Generated prompt: {prompt[:200]}...")
-
-                # Create multimodal input for vLLM
-                inputs = {
-                    "prompt": prompt,
-                    "multi_modal_data": {
-                        "image": processed_images[0] if len(processed_images) == 1 else processed_images
-                    }
-                }
-
-            elif task_type == "text":
-                langchain_messages = task_payload.get("langchain_messages", [])
-                chat_history = []
-                for msg in langchain_messages:
-                    if isinstance(msg, HumanMessage):
-                        chat_history.append({"role": "user", "content": msg.content})
-                    elif isinstance(msg, AIMessage):
-                        chat_history.append({"role": "model", "content": msg.content})
-                    elif isinstance(msg, SystemMessage):
-                        chat_history.append({"role": "system", "content": msg.content})
-                
-                # Apply chat template
-                prompt = tokenizer.apply_chat_template(
-                    chat_history,
-                    tokenize=False,
-                    add_generation_prompt=True
-                )
-                
-                inputs = prompt  # For text-only, vLLM accepts string directly
-
-            else:
-                raise ValueError(f"Unknown task_type: {task_type}")
-
-            # Set up sampling parameters
-            sampling_params = SamplingParams(
-                temperature=0.7,
-                top_p=0.9,
-                max_tokens=req_max_new_tokens,
-                repetition_penalty=1.15,
-            )
-            
-            # Generate with vLLM
-            gen_start_time = time.time()
-            outputs = llm.generate([inputs], sampling_params)
-            gen_duration = time.time() - gen_start_time
-            
-            response_text = outputs[0].outputs[0].text.strip()
-            num_generated_tokens = len(outputs[0].outputs[0].token_ids)
-            tokens_per_second = num_generated_tokens / gen_duration if gen_duration > 0 else 0
-            
-            inference_duration = time.time() - inference_start_time
-            worker_process_logger.info(
-                f"Worker {worker_id} completed task {task_id} in {inference_duration:.2f}s. "
-                f"Generated {num_generated_tokens} tokens ({tokens_per_second:.2f} tokens/s)."
-            )
-            result_queue.put((task_id, response_text, None, req_max_new_tokens, task_type))
-            
-        except Exception as e:
-            current_task_id_err = task_id if 'task_id' in locals() else "UNKNOWN_TASK"
-            error_message = f"Worker {worker_id} error on task {current_task_id_err}: {str(e)}"
-            worker_process_logger.error(error_message, exc_info=True)
-            m_tokens = req_max_new_tokens if 'req_max_new_tokens' in locals() else DEFAULT_MAX_NEW_TOKENS
-            t_type = task_type if 'task_type' in locals() else "unknown"
-            result_queue.put((current_task_id_err, None, error_message, m_tokens, t_type))
-        finally:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-            try:
-                clear_correlation_id()
-            except Exception:
-                pass
+    # Run async dispatcher
+    try:
+        asyncio.run(request_dispatcher(
+            task_queue, engine, result_queue, worker_id, wlog,
+            coalesce_ms=vllm_config["coalesce_ms"]
+        ))
+    except Exception as e:
+        wlog.error(f"Dispatcher crashed: {e}", exc_info=True)
     
-    del llm
-    del tokenizer
+    # Cleanup
+    del engine
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
-    worker_process_logger.info(f"Worker {worker_id} shut down.")
+    wlog.info(f"Worker {worker_id} shut down.")
 
 # --- Worker State Manager (unchanged structure) ---
 class ConcurrentWorkerState:
@@ -508,27 +595,9 @@ class ConcurrentWorkerState:
                 self.model_task_queue, self.model_result_queue, self.gunicorn_worker_id, self.unique_process_id_str
             )
         else:
-            # Direct load mode with vLLM
-            logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Direct load mode with vLLM.")
-            
-            if torch.cuda.is_available():
-                torch.cuda.set_device(0)
-                logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: CUDA device set.")
-
-            # Minimal config - let vLLM auto-calculate the rest
-            gpu_mem_util = get_dynamic_gpu_memory_utilization()
-            logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Using gpu_memory_utilization={gpu_mem_util:.2f}")
-            self.direct_llm = LLM(
-                model=MODEL_NAME,
-                trust_remote_code=True,
-                gpu_memory_utilization=gpu_mem_util,
-                max_model_len=512,  # Short context for direct mode
-            )
-            self.direct_tokenizer = self.direct_llm.get_tokenizer()
-            
-            # Create a direct wrapper
-            self.chat_model_instance = DirectVLLMWrapper(self.direct_llm, self.direct_tokenizer)
-            logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Direct vLLM model ready.")
+            # Direct load mode - deprecated, always use subprocess for async batching
+            logger.warning(f"GunicornWorker-{self.gunicorn_worker_id}: Direct load mode deprecated. Use subprocess mode for async batching.")
+            raise RuntimeError("Direct load mode is deprecated. Set use_sub_process=True for async batching support.")
 
     def cleanup(self):
         logger.info(f"GunicornWorker-{self.gunicorn_worker_id}: Cleaning up Gemma WorkerState...")
@@ -563,15 +632,6 @@ class ConcurrentWorkerState:
                     except:
                         pass
         
-        if not self.enable_sub_process_model and self.direct_llm:
-            try:
-                del self.direct_llm
-                del self.direct_tokenizer
-                self.direct_llm = None
-                self.direct_tokenizer = None
-                logger.info(f"Direct vLLM resources deleted.")
-            except Exception as e:
-                logger.error(f"Error during direct load cleanup: {e}", exc_info=True)
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -657,7 +717,15 @@ class ConcurrentModelWrapper:
             self._pending_tasks[current_task_id] = {"event": event, "result": None}
         
         try:
-            self.task_queue.put((current_task_id, task_payload, req_max_new_tokens, task_type, corr_id))
+            # Send task as dict for async dispatcher
+            task_dict = {
+                "task_id": current_task_id,
+                "payload": task_payload,
+                "max_new_tokens": req_max_new_tokens,
+                "task_type": task_type,
+                "correlation_id": corr_id,
+            }
+            self.task_queue.put(task_dict)
             
             # Wait for result (the result router thread will signal us)
             result_timeout_seconds = 600  # 10 minutes
@@ -685,98 +753,6 @@ class ConcurrentModelWrapper:
             with self._pending_lock:
                 self._pending_tasks.pop(current_task_id, None)
             raise
-
-class DirectVLLMWrapper:
-    """Wrapper for direct vLLM usage."""
-    def __init__(self, llm: LLM, tokenizer):
-        self.llm = llm
-        self.tokenizer = tokenizer
-
-    def invoke(self, task_payload: Dict[str, Any], task_type: str, **kwargs) -> AIMessage:
-        # Defer deciding on default until we know if this is multimodal
-        provided_tokens = kwargs.get("max_new_tokens", None)
-        
-        if task_type == "multimodal":
-            # Handle multimodal with vLLM
-            user_text = task_payload.get("user_text", "")
-            image_inputs_raw = task_payload.get("images", [])
-            
-            # Process images (simplified for direct mode)
-            processed_images = []
-            for img in image_inputs_raw:
-                try:
-                    processed = process_image_internal(img, logger)
-                    if isinstance(processed, list):
-                        processed_images.append(processed[0])
-                    else:
-                        processed_images.append(processed)
-                except Exception as e:
-                    logger.error(f"Failed to process image: {e}")
-            
-            # Build messages for chat template
-            messages = []
-            user_content = []
-            
-            # Add images first
-            for img in processed_images:
-                user_content.append({"type": "image"})
-            
-            # Add text
-            user_content.append({"type": "text", "text": user_text})
-            
-            messages.append({"role": "user", "content": user_content})
-            
-            # Apply chat template
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            
-            inputs = {
-                "prompt": prompt,
-                "multi_modal_data": {"image": processed_images[0] if processed_images else None}
-            }
-            default_for_task = DEFAULT_MAX_NEW_TOKENS_MULTI
-        else:
-            # Text-only
-            langchain_messages = task_payload.get("langchain_messages", [])
-            chat_history = []
-            for msg in langchain_messages:
-                if isinstance(msg, HumanMessage):
-                    chat_history.append({"role": "user", "content": msg.content})
-                elif isinstance(msg, AIMessage):
-                    chat_history.append({"role": "model", "content": msg.content})
-                elif isinstance(msg, SystemMessage):
-                    chat_history.append({"role": "system", "content": msg.content})
-            
-            prompt = self.tokenizer.apply_chat_template(
-                chat_history,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            inputs = prompt
-            default_for_task = DEFAULT_MAX_NEW_TOKENS
-        
-        # Coerce to valid int now that we have the proper default
-        req_max_new_tokens = _ensure_int_tokens(
-            provided_tokens if provided_tokens is not None else default_for_task,
-            default_for_task,
-            logger,
-            "max_new_tokens",
-        )
-        
-        sampling_params = SamplingParams(
-            temperature=0.7,
-            top_p=0.9,
-            max_tokens=req_max_new_tokens,
-            repetition_penalty=1.15,
-        )
-        
-        outputs = self.llm.generate([inputs], sampling_params)
-        response_text = outputs[0].outputs[0].text.strip()
-        
-        return AIMessage(content=response_text)
 
 # Global instance
 _gemma_worker_state_instance: Optional[ConcurrentWorkerState] = None

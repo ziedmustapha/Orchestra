@@ -29,5 +29,7 @@ pkill -9 -f "VLLM::EngineCore" || true
 pkill -9 -f "nvidia-cuda-mps-server" || true
 
 pkill -9 -f "$ROOT_DIR/.venvs/env3/bin/python" || true
+pkill -9 -f "$ROOT_DIR/.venvs/env4/bin/python" || true
+pkill -9 -f "$ROOT_DIR/.venvs/env5/bin/python" || true
 
 echo "All services and MPS processes signaled to stop."

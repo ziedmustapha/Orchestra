@@ -332,23 +332,35 @@ Implementation details:
   - Qwen3 (`models/qwen3.py`) uses MoE-optimized kernel configs for H100 GPUs with chunked prefill enabled.
   - Worker FastAPI apps (`main.py`) offload blocking model calls with `asyncio.to_thread()` so the HTTP event loop stays responsive while models run.
 
-### v3 vLLM Configuration
+### v3 Model Configuration
 
-All vLLM parameters are configurable via environment variables:
+All model parameters are configurable via environment variables:
 
 ```bash
-# Qwen3 (text, MoE)
-export VLLM_MAX_MODEL_LEN=4000
+# Qwen3 (text, MoE) - vLLM
+export VLLM_MAX_MODEL_LEN=10000
 export VLLM_MAX_NUM_BATCHED_TOKENS=16384
 export VLLM_MAX_NUM_SEQS=256
 export VLLM_ENABLE_CHUNKED_PREFILL=true
 export VLLM_COALESCE_MS=5
 
-# Qwen-VL (multimodal)
+# Qwen-VL (multimodal) - vLLM
 export QWEN_VL_MAX_MODEL_LEN=32768
 export QWEN_VL_MAX_NUM_BATCHED_TOKENS=32768
 export QWEN_VL_MAX_NUM_SEQS=16
 export QWEN_VL_ENABLE_CHUNKED_PREFILL=false  # disabled for multimodal
+
+# Gemma3 (text, dense) - vLLM
+export GEMMA_MAX_MODEL_LEN=10000
+export GEMMA_MAX_NUM_BATCHED_TOKENS=16384
+export GEMMA_MAX_NUM_SEQS=256
+export GEMMA_ENABLE_CHUNKED_PREFILL=true
+
+# WhisSent (ASR + Emotion) - Hugging Face pipelines
+export WHISSENT_BATCH_SIZE=24
+export WHISSENT_CHUNK_LENGTH_S=30.0
+export WHISSENT_USE_FLASH_ATTN=true
+export WHISSENT_TORCH_COMPILE=false  # experimental
 ```
 
 ### Demo: parallel even on the same GPU

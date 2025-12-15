@@ -291,7 +291,7 @@ class LoadBalancer:
 
     # Add this to WorkerInfo.__init__
     # Models that support internal concurrent batching (vLLM AsyncLLMEngine)
-    CONCURRENT_MODELS = {"qwen3", "qwen"}  # Add other models as you migrate them
+    CONCURRENT_MODELS = {"qwen3", "qwen", "gemma3"}  # Models using AsyncLLMEngine
 
     async def process_request(self, request_data: dict) -> dict:
         model_name = request_data.get("model_name")
@@ -303,7 +303,7 @@ class LoadBalancer:
             raise HTTPException(status_code=503, detail=f"No workers available for model '{model_name}'.")
 
         # Check if this model supports concurrent processing
-        supports_concurrent = model_name in {"qwen3", "qwen"}  # Models using AsyncLLMEngine
+        supports_concurrent = model_name in {"qwen3", "qwen", "gemma3"}  # Models using AsyncLLMEngine
         
         if supports_concurrent:
             # Forward immediately - let vLLM handle batching internally

@@ -12,10 +12,12 @@ This release brings significant performance improvements through comprehensive v
 
 ### Added
 - **vLLM Engine Configuration**: Environment variable-driven configuration for all vLLM parameters
-  - `VLLM_MAX_MODEL_LEN`, `VLLM_MAX_NUM_BATCHED_TOKENS`, `VLLM_MAX_NUM_SEQS`
-  - `VLLM_ENABLE_CHUNKED_PREFILL`, `VLLM_ENABLE_PREFIX_CACHING`
-  - `VLLM_NUM_SCHEDULER_STEPS` for multi-step scheduling
-  - Model-specific variants: `QWEN_VL_*` for Qwen-VL multimodal
+  - `VLLM_*` for Qwen3 (text, MoE model)
+  - `QWEN_VL_*` for Qwen-VL (multimodal)
+  - `GEMMA_*` for Gemma3 (text, dense model)
+- **WhisSent Optimization**: Configurable batch size, Flash Attention 2, optional torch.compile
+  - `WHISSENT_BATCH_SIZE`, `WHISSENT_CHUNK_LENGTH_S`
+  - `WHISSENT_USE_FLASH_ATTN`, `WHISSENT_TORCH_COMPILE`
 - **Optimized Batching Strategy**: Coalescing delay for better request batching under load
   - `VLLM_COALESCE_MS` / `QWEN_VL_COALESCE_MS` for tunable batch collection windows
 - **MoE Kernel Configuration**: H100 PCIe optimized kernel config for Mixture-of-Experts models (Qwen3)
