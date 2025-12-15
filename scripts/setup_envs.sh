@@ -5,9 +5,9 @@ set -euo pipefail
 # setup_envs.sh
 # Create per-model virtual environments using uv and install the right requirements.
 # Uses Python 3.10 for all environments.
-# - env3: Qwen-VL + WhisSent deps (requirements/requirements_env3.txt)
+# - env3: Qwen-VL + WhisSent deps - vLLM 0.8.5 (requirements/requirements_env3.txt)
 # - env4: Gemma3 deps (requirements/requirements_env4.txt)
-# - env5: Qwen3 deps (requirements/requirements_env5.txt)
+# - env5: Qwen3 deps - vLLM 0.12.0 (requirements/requirements_qwen3_vllm012.txt)
 # - env-lb: Load balancer + minimal deps (requirements/requirements.txt)
 #
 # Usage examples:
@@ -54,7 +54,7 @@ Options:
 Positional args (optional, default: env3 env4 env5 lb):
   env3  Qwen-VL + WhisSent environment (requirements_env3.txt)
   env4  Gemma3 environment (requirements_env4.txt)
-  env5  Qwen3 environment (requirements_env5.txt)
+  env5  Qwen3 environment - vLLM 0.12.0 (requirements_qwen3_vllm012.txt)
   lb    Load balancer + minimal deps (requirements.txt)
 
 Examples:
@@ -125,7 +125,7 @@ for env in "${ENVS[@]}"; do
     env4)
       create_env "env4" "$REQ_DIR/requirements_env4.txt";;
     env5)
-      create_env "env5" "$REQ_DIR/requirements_env5.txt";;
+      create_env "env5" "$REQ_DIR/requirements_qwen3_vllm012.txt";;
     lb)
       create_env "env-lb" "$REQ_DIR/requirements.txt"; LB_CHOSEN="lb";;
   esac

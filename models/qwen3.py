@@ -51,7 +51,6 @@ def get_vllm_engine_config() -> Dict[str, Any]:
         VLLM_MAX_MODEL_LEN: Maximum sequence length (default: 4000)
         VLLM_MAX_NUM_BATCHED_TOKENS: Max tokens per scheduler step (default: 16384)
         VLLM_MAX_NUM_SEQS: Max concurrent sequences (default: 256)
-        VLLM_NUM_SCHEDULER_STEPS: Multi-step scheduling (default: 1, try 8-16 for better throughput)
         VLLM_ENABLE_CHUNKED_PREFILL: Enable chunked prefill (default: true)
         VLLM_ENABLE_PREFIX_CACHING: Enable prefix/prompt caching (default: false)
     """
@@ -59,7 +58,7 @@ def get_vllm_engine_config() -> Dict[str, Any]:
         "max_model_len": int(os.environ.get("VLLM_MAX_MODEL_LEN", "10000")),
         "max_num_batched_tokens": int(os.environ.get("VLLM_MAX_NUM_BATCHED_TOKENS", "65536")),
         "max_num_seqs": int(os.environ.get("VLLM_MAX_NUM_SEQS", "256")),
-        "num_scheduler_steps": int(os.environ.get("VLLM_NUM_SCHEDULER_STEPS", "10")),
+        # num_scheduler_steps removed in vLLM 0.12.0 - now automatic
         "enable_chunked_prefill": os.environ.get("VLLM_ENABLE_CHUNKED_PREFILL", "true").lower() in ("true", "1", "yes"),
         "enable_prefix_caching": os.environ.get("VLLM_ENABLE_PREFIX_CACHING", "true").lower() in ("true", "1", "yes"),
     }
@@ -101,11 +100,11 @@ async def process_single_request(
         prompt = f"<|im_start|>user\n{user_input}<|im_end|>\n<|im_start|>assistant\n"
         
         if use_beam_search and temperature == 0:
+            # Note: best_of removed in vLLM 0.12.0, use_beam_search deprecated
+            # Using greedy decoding (temperature=0) as alternative
             sampling_params = SamplingParams(
                 max_tokens=max_new_tokens,
                 temperature=0,
-                best_of=5,
-                use_beam_search=True,
             )
         else:
             sampling_params = SamplingParams(
@@ -286,7 +285,7 @@ def concurrent_vllm_qwen3_worker(
             trust_remote_code=True,
             gpu_memory_utilization=gpu_mem_util,
             max_model_len=vllm_config["max_model_len"],
-            disable_log_requests=False,  # Enable for monitoring
+            # disable_log_requests removed in vLLM 0.12.0 - use VLLM_CONFIGURE_LOGGING env var
             # Enable chunked prefill - critical for concurrent requests
             # Without this, ALL prefills must complete before ANY decode starts
             enable_chunked_prefill=vllm_config["enable_chunked_prefill"],
@@ -295,9 +294,7 @@ def concurrent_vllm_qwen3_worker(
             max_num_batched_tokens=vllm_config["max_num_batched_tokens"],
             # Max concurrent sequences - H100 has plenty of KV cache headroom
             max_num_seqs=vllm_config["max_num_seqs"],
-            # Multi-step scheduling - process multiple decode steps per iteration
-            # Reduces scheduling overhead and improves GPU utilization
-            num_scheduler_steps=vllm_config["num_scheduler_steps"],
+            # num_scheduler_steps removed in vLLM 0.12.0 - now automatic
             # Prefix caching for repeated prompts
             enable_prefix_caching=vllm_config["enable_prefix_caching"],
             enforce_eager=False,

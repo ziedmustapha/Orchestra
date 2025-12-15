@@ -85,9 +85,11 @@ scripts/stop_all.sh
 ## Models & Environments
 
 - **env4 → Gemma3** (GEMMA_PYTHON_PATH)
-- **env3 → Qwen2.5‑VL + WhisSent** (QWEN_PYTHON_PATH, WHISSENT_PYTHON_PATH)
-- **env5 → Qwen3** (QWEN3_PYTHON_PATH)
+- **env3 → Qwen2.5‑VL + WhisSent** - vLLM 0.8.5 (QWEN_PYTHON_PATH, WHISSENT_PYTHON_PATH)
+- **env5 → Qwen3** - vLLM 0.12.0 (QWEN3_PYTHON_PATH)
 - **env-lb → Load balancer** (LOAD_BALANCER_PYTHON_PATH)
+
+> **Note**: Qwen3 uses vLLM 0.12.0 for V1 engine optimizations (~21 req/s). Qwen-VL stays on vLLM 0.8.5 as the V1 ViT kernels require CUDA 12.9+.
 
 See Installation & Quick Start above for setup.
 
@@ -381,10 +383,10 @@ xdg-open http://127.0.0.1:9001/dashboard || true
 
 Tested on NVIDIA H100 PCIe 80GB:
 
-| Model | Type | Throughput | Latency (p50) | Concurrency |
-|-------|------|-----------|---------------|-------------|
-| **Qwen3** (30B MoE) | Text | 17.83 req/s | 2,847ms | 100 |
-| **Qwen-VL** (7B Dense) | Multimodal | 6.78 req/s | 9,573ms | 100 |
+| Model | Type | vLLM | Throughput | Latency (p50) | Concurrency |
+|-------|------|------|-----------|---------------|-------------|
+| **Qwen3** (30B MoE) | Text | 0.12.0 | 20.85 req/s | 2,943ms | 100 |
+| **Qwen-VL** (7B Dense) | Multimodal | 0.8.5 | 5.12 req/s | 12,724ms | 100 |
 
 Key optimizations:
 - Chunked prefill for continuous batching
