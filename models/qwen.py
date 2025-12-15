@@ -53,9 +53,37 @@ def get_dynamic_gpu_memory_utilization():
             pass
     
     models_on_gpu = int(os.environ.get("MODELS_ON_GPU", "1"))
-    available_fraction = 0.90
+    available_fraction = 0.95
     utilization = available_fraction / models_on_gpu
-    return max(0.1, min(0.9, utilization))
+    return max(0.1, min(0.95, utilization))
+
+
+def get_vllm_engine_config() -> Dict[str, Any]:
+    """
+    Get vLLM engine configuration from environment variables.
+    Allows tuning without code changes for H100 optimization.
+    
+    Note: Qwen2.5-VL-7B is a DENSE model (not MoE), so no MoE config needed.
+    
+    IMPORTANT: Qwen-VL images use ~147,456 tokens for embeddings!
+    max_num_batched_tokens must be >= this value or max_num_seqs will be forced to 1.
+    
+    Environment variables:
+        QWEN_VL_MAX_MODEL_LEN: Maximum sequence length (default: 32768)
+        QWEN_VL_MAX_NUM_BATCHED_TOKENS: Max tokens per scheduler step (default: 32768)
+        QWEN_VL_MAX_NUM_SEQS: Max concurrent sequences (default: 16, lower for multimodal)
+        QWEN_VL_ENABLE_CHUNKED_PREFILL: Enable chunked prefill (default: false for multimodal)
+        QWEN_VL_ENABLE_PREFIX_CACHING: Enable prefix/prompt caching (default: false)
+    """
+    config = {
+        "max_model_len": int(os.environ.get("QWEN_VL_MAX_MODEL_LEN", "32768")),
+        "max_num_batched_tokens": int(os.environ.get("QWEN_VL_MAX_NUM_BATCHED_TOKENS", "65536")),
+        "max_num_seqs": int(os.environ.get("QWEN_VL_MAX_NUM_SEQS", "256")),
+        # Chunked prefill can cause issues with multimodal - disable by default
+        "enable_chunked_prefill": os.environ.get("QWEN_VL_ENABLE_CHUNKED_PREFILL", "true").lower() in ("true", "1", "yes"),
+        "enable_prefix_caching": os.environ.get("QWEN_VL_ENABLE_PREFIX_CACHING", "true").lower() in ("true", "1", "yes"),
+    }
+    return config
 
 
 async def process_batch_together(
@@ -240,10 +268,15 @@ async def task_receiver_loop(
 ):
     """
     Main async loop that batch-collects tasks, then processes them together.
+    Uses coalescing window to batch burst arrivals.
     """
     loop = asyncio.get_event_loop()
     
-    logger.info(f"Task receiver loop started - batch processing enabled for Qwen-VL")
+    # Coalescing: after first task, wait briefly for more to arrive
+    coalesce_ms = float(os.environ.get("QWEN_VL_COALESCE_MS", "1"))
+    max_batch = int(os.environ.get("QWEN_VL_MAX_BATCH", "256"))
+    
+    logger.info(f"Task receiver loop started - batch processing enabled (coalesce={coalesce_ms}ms, max_batch={max_batch})")
     
     while True:
         try:
@@ -253,11 +286,13 @@ async def task_receiver_loop(
                 logger.info("Shutdown signal received")
                 break
             
-            # Batch collection
-            batch = [task]
-            await asyncio.sleep(0.300)  # 100ms collection window
+            # Coalescing window: wait briefly for more tasks to arrive
+            if coalesce_ms > 0:
+                await asyncio.sleep(coalesce_ms / 1000.0)
             
-            while len(batch) < 64:  # Lower cap for multimodal due to memory
+            # Batch collection - drain queue
+            batch = [task]
+            while len(batch) < max_batch:
                 try:
                     t = task_queue.get_nowait()
                     if t is None:
@@ -307,12 +342,26 @@ def concurrent_qwen_worker(
             f"(MODELS_ON_GPU={os.environ.get('MODELS_ON_GPU', '1')})"
         )
         
+        vllm_config = get_vllm_engine_config()
+        worker_logger.info(f"vLLM config: {vllm_config}")
+        
         engine_args = AsyncEngineArgs(
             model=MODEL_NAME,
             trust_remote_code=True,
             gpu_memory_utilization=gpu_mem_util,
-            max_model_len=8192,
-            disable_log_requests=True,
+            max_model_len=vllm_config["max_model_len"],
+            disable_log_requests=False,  # Enable for monitoring
+            # Chunked prefill for better concurrent handling
+            enable_chunked_prefill=vllm_config["enable_chunked_prefill"],
+            # Max tokens per scheduler iteration
+            max_num_batched_tokens=vllm_config["max_num_batched_tokens"],
+            # Max concurrent sequences (lower for multimodal due to memory)
+            max_num_seqs=vllm_config["max_num_seqs"],
+            # Prefix caching for repeated prompts
+            enable_prefix_caching=vllm_config["enable_prefix_caching"],
+            # Multimodal specific - limit images to manage memory
+            # Each image can use up to ~1280 tokens depending on resolution
+            limit_mm_per_prompt={"image": 4},
         )
         
         engine = AsyncLLMEngine.from_engine_args(engine_args)
