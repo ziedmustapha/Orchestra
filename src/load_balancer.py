@@ -290,7 +290,7 @@ class LoadBalancer:
             raise HTTPException(status_code=502, detail=f"Bad Gateway: Error communicating with worker {worker.worker_id}.")
 
     # Add this to WorkerInfo.__init__
-    # Models that support internal concurrent batching (vLLM AsyncLLMEngine)
+    # Models that support internal concurrent batching (vLLM AsyncLLMEngine only)
     CONCURRENT_MODELS = {"qwen3", "qwen", "gemma3"}  # Models using AsyncLLMEngine
 
     async def process_request(self, request_data: dict) -> dict:
@@ -302,7 +302,7 @@ class LoadBalancer:
         if not worker:
             raise HTTPException(status_code=503, detail=f"No workers available for model '{model_name}'.")
 
-        # Check if this model supports concurrent processing
+        # Check if this model supports concurrent processing (vLLM AsyncLLMEngine models only)
         supports_concurrent = model_name in {"qwen3", "qwen", "gemma3"}  # Models using AsyncLLMEngine
         
         if supports_concurrent:

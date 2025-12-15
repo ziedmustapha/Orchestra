@@ -145,20 +145,40 @@ def concurrent_whissent_worker(task_queue: Queue, result_queue: Queue, worker_id
         # Initialize pipelines with optimized settings
         wlog.info("Loading Whisper ASR pipeline...")
         model_kwargs = {"torch_dtype": dtype}
+        
+        # Try with Flash Attention 2 if requested, fall back if not available
         if ws_config["use_flash_attn"]:
             try:
                 model_kwargs["attn_implementation"] = "flash_attention_2"
-            except Exception:
-                wlog.warning("Flash Attention 2 not available, using default attention")
-        
-        asr_pipe = pipeline(
-            task="automatic-speech-recognition",
-            model=ASR_MODEL_ID,
-            device=device,
-            model_kwargs=model_kwargs,
-            chunk_length_s=ws_config["chunk_length_s"],
-            batch_size=ws_config["batch_size"],
-        )
+                asr_pipe = pipeline(
+                    task="automatic-speech-recognition",
+                    model=ASR_MODEL_ID,
+                    device=device,
+                    model_kwargs=model_kwargs,
+                    chunk_length_s=ws_config["chunk_length_s"],
+                    batch_size=ws_config["batch_size"],
+                )
+                wlog.info("Loaded ASR pipeline with Flash Attention 2")
+            except Exception as e:
+                wlog.warning(f"Flash Attention 2 not available ({e}), falling back to default attention")
+                model_kwargs.pop("attn_implementation", None)
+                asr_pipe = pipeline(
+                    task="automatic-speech-recognition",
+                    model=ASR_MODEL_ID,
+                    device=device,
+                    model_kwargs=model_kwargs,
+                    chunk_length_s=ws_config["chunk_length_s"],
+                    batch_size=ws_config["batch_size"],
+                )
+        else:
+            asr_pipe = pipeline(
+                task="automatic-speech-recognition",
+                model=ASR_MODEL_ID,
+                device=device,
+                model_kwargs=model_kwargs,
+                chunk_length_s=ws_config["chunk_length_s"],
+                batch_size=ws_config["batch_size"],
+            )
         
         # Optional torch.compile for faster inference
         if ws_config["torch_compile"] and hasattr(torch, "compile"):
