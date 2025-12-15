@@ -8,9 +8,15 @@
 
 ## Supported Versions
 
-This repository tracks `main`. We generally patch the latest release.
+| Version | Supported |
+|---------|-----------|
+| 3.x.x   | ✅ Current |
+| 2.x.x   | ⚠️ Security fixes only |
+| < 2.0   | ❌ No longer supported |
 
 ## Best Practices
 
 - Do not commit API keys or credentials. Use `api_keys.json` locally and keep it out of VCS.
 - Prefer HTTPS in production and configure firewalls appropriately when exposing the API.
+- Keep vLLM and PyTorch dependencies updated for security patches.
+- Review `docs/API_AUTHENTICATION.md` for proper API key management.

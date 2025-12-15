@@ -1,5 +1,7 @@
 # API Authentication Guide
 
+> Orchestra v3 Authentication System
+
 ## Overview
 
 Orchestra supports API key authentication for public access while keeping local access open. This allows you to:

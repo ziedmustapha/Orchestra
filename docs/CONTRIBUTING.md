@@ -1,14 +1,19 @@
-# Contributing to Orchestra
+# Contributing to Orchestra v3
 
 Thank you for your interest in contributing!
 
 ## Development setup
 
-- Python 3.11 recommended
-- Create a virtualenv and install minimal deps:
-  - `python3 -m venv .venv && source .venv/bin/activate`
-  - `pip install -r requirements.txt`
-- Optional model-specific deps live under `requirements/`:
+- Python 3.10+ recommended (3.11 for best performance)
+- Install [uv](https://github.com/astral-sh/uv) for fast package management:
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+- Run the setup script to create virtual environments:
+  ```bash
+  scripts/setup_envs.sh  # uses uv for fast dependency installation
+  ```
+- Model-specific requirements:
   - `requirements_env3.txt` (Qwen / WhisSent)
   - `requirements_env4.txt` (Gemma)
   - `requirements_env5.txt` (Qwen3)
@@ -39,9 +44,10 @@ Thank you for your interest in contributing!
 ## Issue reports
 
 When filing bugs, include:
-- Version info and environment (GPU/driver/CUDA if relevant)
+- Orchestra version (v3.x.x) and environment (GPU/driver/CUDA if relevant)
 - Exact steps to reproduce, expected vs actual
 - Relevant logs (scrub secrets) from `logs/`
+- vLLM configuration if performance-related (environment variables)
 
 ## Security
 

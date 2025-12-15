@@ -1,6 +1,12 @@
-# Orchestra
+# Orchestra v3
 
-> Orchestrate multiple AI models on distributed GPUs with intelligent load balancing, parallelization, GPU optimization, and real-time observability.
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/ziedmustapha/Orchestra)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+
+> Orchestrate multiple AI models on distributed GPUs with intelligent load balancing, vLLM optimization, and real-time observability.
+
+**What's New in v3**: H100 GPU optimization, vLLM engine configuration, improved batching strategies, and 17+ req/s throughput on demanding models. See [CHANGELOG](docs/CHANGELOG.md).
 
 ## Table of Contents
 
@@ -19,20 +25,28 @@
 - [Dashboard & Observability](#dashboard--observability)
 - [Structured Logging](#structured-logging)
 - [Parallelization & GPU Sharing](#parallelization--gpu-sharing)
+- [v3 Performance Benchmarks](#v3-performance-benchmarks)
 - [Validation & Load Testing](#validation--load-testing)
 - [Security & Binding Defaults](#security--binding-defaults)
 
 ## Features
 
-- **Multi-Model Support**: Gemma3, Qwen2.5-VL, Qwen3, WhisSent (Whisper + Emotion)
-- **Load Balancing**: Round-robin across GPU workers with queueing and health checks
-- **GPU Optimization**: CUDA MPS for multi-process sharing, vLLM for inference
+### Core Capabilities
+- **Multi-Model Support**: Gemma3, Qwen2.5-VL (multimodal), Qwen3 (MoE), WhisSent (ASR + Emotion)
+- **Load Balancing**: Intelligent routing across GPU workers with queueing and health checks
+- **Real-time Dashboard**: Live metrics, per-worker stats, log viewer
+
+### v3 Performance Optimizations
+- **vLLM Engine Tuning**: Environment-driven configuration for max throughput
+- **H100 GPU Optimization**: MoE kernel configs, 95% GPU memory utilization
+- **Intelligent Batching**: Coalescing delays, chunked prefill, optimized scheduler
+- **Async Processing**: Burst-aware request dispatcher for better parallelism
+
+### Infrastructure
+- **GPU Management**: CUDA MPS for multi-process sharing, single-model-per-GPU enforcement
 - **Authentication**: Optional API key auth for external access
-- **Observability**: Live dashboard, JSON metrics, structured logs
-- **Scalability**: Auto-scaling workers per model
-- **Validation & Load Testing**
-- **Security & Binding Defaults**
-- **WhisSent (Whisper ASR + Emotion)**
+- **Observability**: Structured JSON logs, correlation IDs, log rotation
+- **Testing**: Concurrency tests, multi-user simulation, GPU profiling tools
 
 ## Installation & Quick Start
 
@@ -43,25 +57,28 @@ Follow these steps to get Orchestra running:
 git clone https://github.com/ziedmustapha/Orchestra.git
 cd Orchestra
 
-# 2) Set up per-model virtual environments and install dependencies
-scripts/setup_envs.sh           # creates .venvs/{env3,env4,env5,env-lb}, installs deps
+# 2) Install uv (fast Python package manager) if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3) Activate the environment variables
+# 3) Set up per-model virtual environments and install dependencies
+scripts/setup_envs.sh           # creates .venvs/{env3,env4,env5,env-lb}, uses uv for fast installs
+
+# 4) Activate the environment variables
 source ./orchestra.env          # exports GEMMA/QWEN/QWEN3/WHISSENT/LOAD_BALANCER_PYTHON_PATH
 
-# 4) Install system prerequisites (for WhisSent and PDFs)
+# 5) Install system prerequisites (for WhisSent and PDFs)
 sudo apt-get update && sudo apt-get install -y ffmpeg poppler-utils
 
-# 5) Start the API with 1 Qwen3 worker (adjust numbers as needed)
+# 6) Start the API with 1 Qwen3 worker (adjust numbers as needed)
 scripts/run_api.sh 0 0 1 1 start
 
-# 6) Open the dashboard
+# 7) Open the dashboard
 http://127.0.0.1:9001/dashboard
 
-# 7) Test it quickly
+# 8) Test it quickly
 python3 tests/test_concurrency.py --models whissent,qwen3 --per-model-requests 10 --concurrency-per-model 10 --models-concurrently
 
-# 8) Stop everything
+# 9) Stop everything
 scripts/stop_all.sh
 ```
 
@@ -311,8 +328,28 @@ Implementation details:
 - **Parallel on the same GPU via NVIDIA MPS**: `run_api.sh` launches N workers and maps them round‑robin to GPUs with `CUDA_VISIBLE_DEVICES`. When N > number of GPUs, multiple workers share the same GPU. The script attempts to start the NVIDIA MPS control daemon (`nvidia-cuda-mps-control`) so kernels from different processes can overlap on a single GPU.
 
 - **Model‑layer parallelism**:
-  - Qwen‑VL (`models/qwen.py`) spawns a dedicated vLLM sub‑process per worker (`concurrent_qwen_worker()`), configured with `enable_chunked_prefill=True` and `max_num_seqs=8` for internal parallelism/batching.
+  - Qwen‑VL (`models/qwen.py`) spawns a dedicated vLLM sub‑process per worker, configured with optimized batching for multimodal (max 147K image tokens).
+  - Qwen3 (`models/qwen3.py`) uses MoE-optimized kernel configs for H100 GPUs with chunked prefill enabled.
   - Worker FastAPI apps (`main.py`) offload blocking model calls with `asyncio.to_thread()` so the HTTP event loop stays responsive while models run.
+
+### v3 vLLM Configuration
+
+All vLLM parameters are configurable via environment variables:
+
+```bash
+# Qwen3 (text, MoE)
+export VLLM_MAX_MODEL_LEN=4000
+export VLLM_MAX_NUM_BATCHED_TOKENS=16384
+export VLLM_MAX_NUM_SEQS=256
+export VLLM_ENABLE_CHUNKED_PREFILL=true
+export VLLM_COALESCE_MS=5
+
+# Qwen-VL (multimodal)
+export QWEN_VL_MAX_MODEL_LEN=32768
+export QWEN_VL_MAX_NUM_BATCHED_TOKENS=32768
+export QWEN_VL_MAX_NUM_SEQS=16
+export QWEN_VL_ENABLE_CHUNKED_PREFILL=false  # disabled for multimodal
+```
 
 ### Demo: parallel even on the same GPU
 
@@ -328,20 +365,41 @@ python3 tests/test_concurrency.py --models gemma3 \
 xdg-open http://127.0.0.1:9001/dashboard || true
 ```
 
+## v3 Performance Benchmarks
+
+Tested on NVIDIA H100 PCIe 80GB:
+
+| Model | Type | Throughput | Latency (p50) | Concurrency |
+|-------|------|-----------|---------------|-------------|
+| **Qwen3** (30B MoE) | Text | 17.83 req/s | 2,847ms | 100 |
+| **Qwen-VL** (7B Dense) | Multimodal | 6.78 req/s | 9,573ms | 100 |
+
+Key optimizations:
+- Chunked prefill for continuous batching
+- MoE kernel configs for H100
+- 95% GPU memory utilization
+- Burst-aware request coalescing
+
 ## Validation & Load Testing
 
 - **`tests/test_concurrency.py`**: per‑model concurrency with throughput and latency percentiles (p50/p90/p99) and worker distribution.
   - Run multiple models together with `--models-concurrently`.
 - **`tests/simulate_users.py`**: multi‑user simulation with ramp‑up/hold/ramp‑down, configurable model mix, and a JSON report saved under `logs/`.
+- **`tests/gpu_profile.py`**: High-frequency GPU utilization monitoring during tests.
+- **`tests/vllm_monitor.py`**: Real-time vLLM engine metrics and statistics.
 
 Examples:
 
 ```bash
 # Concurrency test (Qwen3)
-python3 tests/test_concurrency.py --models qwen3 --per-model-requests 50 --concurrency-per-model 12
+python3 tests/test_concurrency.py --models qwen3 --per-model-requests 100 --concurrency-per-model 100
 
 # Multi‑user simulation for all active models
-python3 tests/simulate_users.py --users 30 --hold-sec 60
+python3 tests/simulate_users.py --users 50 --hold-sec 60
+
+# GPU profiling during test
+python3 tests/gpu_profile.py &
+python3 tests/test_concurrency.py --models qwen3 --per-model-requests 50
 ```
 
 ## Security & Binding Defaults
