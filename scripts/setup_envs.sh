@@ -8,11 +8,13 @@ set -euo pipefail
 # - env3: Qwen-VL + WhisSent deps - vLLM 0.8.5 (requirements/requirements_env3.txt)
 # - env4: Gemma3 deps (requirements/requirements_env4.txt)
 # - env5: Qwen3 deps - vLLM 0.12.0 (requirements/requirements_qwen3_vllm012.txt)
+# - env6: Qwen3-Embedding deps - vLLM 0.12.0 (requirements/requirements_qwen3_embedding.txt)
 # - env-lb: Load balancer + minimal deps (requirements/requirements.txt)
 #
 # Usage examples:
-#   scripts/setup_envs.sh                    # create env3 env4 env5 env-lb under .venvs
+#   scripts/setup_envs.sh                    # create env3 env4 env5 env6 env-lb under .venvs
 #   scripts/setup_envs.sh env3 env5          # only create env3 and env5
+#   scripts/setup_envs.sh env6               # only create env6 (Qwen3-Embedding)
 #   scripts/setup_envs.sh --venv-dir /opt/orchestra-venvs
 #   scripts/setup_envs.sh --recreate         # delete and recreate existing envs
 #   scripts/setup_envs.sh --no-write-exports # do not generate orchestra.env
@@ -51,10 +53,11 @@ Options:
   --no-write-exports    Do not write ./orchestra.env exports file
   -h, --help            Show this help
 
-Positional args (optional, default: env3 env4 env5 lb):
+Positional args (optional, default: env3 env4 env5 env6 lb):
   env3  Qwen-VL + WhisSent environment (requirements_env3.txt)
   env4  Gemma3 environment (requirements_env4.txt)
   env5  Qwen3 environment - vLLM 0.12.0 (requirements_qwen3_vllm012.txt)
+  env6  Qwen3-Embedding environment - vLLM 0.12.0 (requirements_qwen3_embedding.txt)
   lb    Load balancer + minimal deps (requirements.txt)
 
 Examples:
@@ -76,7 +79,7 @@ while [[ $# -gt 0 ]]; do
       WRITE_EXPORTS=0; shift;;
     -h|--help)
       print_help; exit 0;;
-    env3|env4|env5|lb)
+    env3|env4|env5|env6|lb)
       ENVS+=("$1"); shift;;
     *)
       echo "Unknown argument: $1" >&2; print_help; exit 1;;
@@ -84,7 +87,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ${#ENVS[@]} -eq 0 ]]; then
-  ENVS=(env3 env4 env5 lb)
+  ENVS=(env3 env4 env5 env6 lb)
 fi
 
 check_uv
@@ -126,6 +129,8 @@ for env in "${ENVS[@]}"; do
       create_env "env4" "$REQ_DIR/requirements_env4.txt";;
     env5)
       create_env "env5" "$REQ_DIR/requirements_qwen3_vllm012.txt";;
+    env6)
+      create_env "env6" "$REQ_DIR/requirements_qwen3_embedding.txt";;
     lb)
       create_env "env-lb" "$REQ_DIR/requirements.txt"; LB_CHOSEN="lb";;
   esac
@@ -138,6 +143,7 @@ if [[ "$WRITE_EXPORTS" -eq 1 ]]; then
   QWEN_PY="$VENV_DIR/env3/bin/python"
   QWEN3_PY="$VENV_DIR/env5/bin/python"
   WHISSENT_PY="$VENV_DIR/env3/bin/python"
+  QWEN3_EMBEDDING_PY="$VENV_DIR/env6/bin/python"
   if [[ "$LB_CHOSEN" == "lb" ]]; then
     LB_PY="$VENV_DIR/env-lb/bin/python"
   else
@@ -149,6 +155,7 @@ export GEMMA_PYTHON_PATH="$GEMMA_PY"
 export QWEN_PYTHON_PATH="$QWEN_PY"
 export QWEN3_PYTHON_PATH="$QWEN3_PY"
 export WHISSENT_PYTHON_PATH="$WHISSENT_PY"
+export QWEN3_EMBEDDING_PYTHON_PATH="$QWEN3_EMBEDDING_PY"
 # Dedicated environment for the load balancer
 export LOAD_BALANCER_PYTHON_PATH="$LB_PY"
 EOF

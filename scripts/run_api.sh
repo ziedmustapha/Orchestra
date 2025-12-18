@@ -23,6 +23,8 @@ QWEN_PYTHON_EXEC="${QWEN_PYTHON_PATH:-$(command -v python3)}"
 QWEN3_PYTHON_EXEC="${QWEN3_PYTHON_PATH:-$(command -v python3)}"
 # Default python for WhisSent (adjust to your env)
 WHISSENT_PYTHON_EXEC="${WHISSENT_PYTHON_PATH:-$(command -v python3)}"
+# Default python for Qwen3-Embedding (adjust to your env)
+QWEN3_EMBEDDING_PYTHON_EXEC="${QWEN3_EMBEDDING_PYTHON_PATH:-$(command -v python3)}"
 # Python for the load balancer (can be either one, or a third one)
 LOAD_BALANCER_PYTHON_EXEC="${LOAD_BALANCER_PYTHON_PATH:-$GEMMA_PYTHON_EXEC}"
 
@@ -32,12 +34,19 @@ GEMMA3_INSTANCES=${1:-1}
 QWEN_INSTANCES=${2:-0}
 QWEN3_INSTANCES=${3:-0}
 
-# Backward-compatible parsing for optional 4th numeric argument as WHISSENT_INSTANCES
+# Backward-compatible parsing for optional 4th and 5th numeric arguments
 if [[ "${4:-}" =~ ^[0-9]+$ ]]; then
     WHISSENT_INSTANCES=${4:-0}
-    ACTION=${5:-start}
+    if [[ "${5:-}" =~ ^[0-9]+$ ]]; then
+        QWEN3_EMBEDDING_INSTANCES=${5:-0}
+        ACTION=${6:-start}
+    else
+        QWEN3_EMBEDDING_INSTANCES=${QWEN3_EMBEDDING_INSTANCES:-0}
+        ACTION=${5:-start}
+    fi
 else
     WHISSENT_INSTANCES=${WHISSENT_INSTANCES:-0}
+    QWEN3_EMBEDDING_INSTANCES=${QWEN3_EMBEDDING_INSTANCES:-0}
     ACTION=${4:-start}
 fi
 
@@ -51,10 +60,11 @@ export GEMMA3_INSTANCES
 export QWEN_INSTANCES
 export QWEN3_INSTANCES
 export WHISSENT_INSTANCES
+export QWEN3_EMBEDDING_INSTANCES
 
 # --- Main Script Logic (largely unchanged) ---
 if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
-    TOTAL_WORKERS=$((GEMMA3_INSTANCES + QWEN_INSTANCES + QWEN3_INSTANCES + WHISSENT_INSTANCES))
+    TOTAL_WORKERS=$((GEMMA3_INSTANCES + QWEN_INSTANCES + QWEN3_INSTANCES + WHISSENT_INSTANCES + QWEN3_EMBEDDING_INSTANCES))
     if [ "$TOTAL_WORKERS" -eq 0 ]; then
         echo "No model instances configured. Set GEMMA3_INSTANCES, QWEN_INSTANCES, or QWEN3_INSTANCES > 0."
         exit 1
@@ -82,6 +92,11 @@ if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
         fi
         if [ "$WHISSENT_INSTANCES" -gt "$NUM_GPUS" ]; then
             echo "Error: WHISSENT_INSTANCES=$WHISSENT_INSTANCES exceeds NUM_GPUS=$NUM_GPUS"
+            echo "       Running multiple instances of the same model on one GPU is suboptimal."
+            VALIDATION_FAILED=1
+        fi
+        if [ "$QWEN3_EMBEDDING_INSTANCES" -gt "$NUM_GPUS" ]; then
+            echo "Error: QWEN3_EMBEDDING_INSTANCES=$QWEN3_EMBEDDING_INSTANCES exceeds NUM_GPUS=$NUM_GPUS"
             echo "       Running multiple instances of the same model on one GPU is suboptimal."
             VALIDATION_FAILED=1
         fi
@@ -149,10 +164,18 @@ start_service() {
             exit 1
         fi
     fi
+    if [ "$QWEN3_EMBEDDING_INSTANCES" -gt 0 ]; then
+        if ! [ -x "$(command -v "$QWEN3_EMBEDDING_PYTHON_EXEC")" ]; then
+            echo "Error: Qwen3-Embedding python executable not found at '$QWEN3_EMBEDDING_PYTHON_EXEC'."
+            echo "Please set QWEN3_EMBEDDING_PYTHON_PATH correctly."
+            exit 1
+        fi
+    fi
     echo "Gemma Python: $GEMMA_PYTHON_EXEC"
     echo "Qwen Python:  $QWEN_PYTHON_EXEC"
     echo "Qwen3 Python: $QWEN3_PYTHON_EXEC"
     echo "WhisSent Python: $WHISSENT_PYTHON_EXEC (if used)"
+    echo "Qwen3-Embedding Python: $QWEN3_EMBEDDING_PYTHON_EXEC (if used)"
     echo "Load Balancer Python: $LOAD_BALANCER_PYTHON_EXEC"
     
     echo "Checking ports..."
@@ -244,9 +267,12 @@ start_service() {
         elif [ $i -lt $((GEMMA3_INSTANCES + QWEN_INSTANCES + QWEN3_INSTANCES)) ]; then
             MODEL_TO_LOAD="qwen3"
             PYTHON_EXEC_FOR_WORKER=$QWEN3_PYTHON_EXEC
-        else
+        elif [ $i -lt $((GEMMA3_INSTANCES + QWEN_INSTANCES + QWEN3_INSTANCES + WHISSENT_INSTANCES)) ]; then
             MODEL_TO_LOAD="whissent"
             PYTHON_EXEC_FOR_WORKER=$WHISSENT_PYTHON_EXEC
+        else
+            MODEL_TO_LOAD="qwen3_embedding"
+            PYTHON_EXEC_FOR_WORKER=$QWEN3_EMBEDDING_PYTHON_EXEC
         fi
 
         echo "Starting worker $i ($MODEL_TO_LOAD) on port $worker_port (GPU $gpu_id, sharing with $models_on_this_gpu model(s)) using ${PYTHON_EXEC_FOR_WORKER}..."
@@ -293,6 +319,7 @@ start_service() {
     echo "  - Qwen Instances:     $QWEN_INSTANCES (Python: $QWEN_PYTHON_EXEC)"
     echo "  - Qwen3 Instances:    $QWEN3_INSTANCES (Python: $QWEN3_PYTHON_EXEC)"
     echo "  - WhisSent Instances: $WHISSENT_INSTANCES (Python: $WHISSENT_PYTHON_EXEC)"
+    echo "  - Qwen3-Embedding Instances: $QWEN3_EMBEDDING_INSTANCES (Python: $QWEN3_EMBEDDING_PYTHON_EXEC)"
     echo "Stop service: ./scripts/run_api.sh stop"
     echo "=========================================="
 
@@ -347,23 +374,25 @@ case "$ACTION" in
         tail_logs
         ;;
     *)
-        echo "Usage: [ENV_VARS] $0 <gemma_instances> <qwen_instances> <qwen3_instances> [whissent_instances] [ACTION]"
+        echo "Usage: [ENV_VARS] $0 <gemma_instances> <qwen_instances> <qwen3_instances> [whissent_instances] [qwen3_embedding_instances] [ACTION]"
         echo "------------------------------------------------------------------"
         echo "ENV_VARS (Optional):"
         echo "  GEMMA_PYTHON_PATH: Full path to the Python executable for Gemma (e.g., /path/to/env4/bin/python)"
         echo "  QWEN_PYTHON_PATH:  Full path to the Python executable for Qwen (e.g., /path/to/env3/bin/python)"
         echo "  QWEN3_PYTHON_PATH: Full path to the Python executable for Qwen3 (e.g., /path/to/env5/bin/python)"
         echo "  WHISSENT_PYTHON_PATH: Full path to the Python executable for WhisSent (e.g., /path/to/env3/bin/python)"
+        echo "  QWEN3_EMBEDDING_PYTHON_PATH: Full path to the Python executable for Qwen3-Embedding (e.g., /path/to/env6/bin/python)"
         echo ""
         echo "Arguments:"
         echo "  gemma_instances: Number of Gemma3 worker instances (default: 1)"
         echo "  qwen_instances:  Number of Qwen worker instances (default: 0)"
         echo "  qwen3_instances: Number of Qwen3 worker instances (default: 0)"
-        echo "  whissent_instances: Number of WhisSent worker instances (default: 0). This argument is optional; if omitted, set WHISSENT_INSTANCES env var instead."
+        echo "  whissent_instances: Number of WhisSent worker instances (default: 0). Optional; can set WHISSENT_INSTANCES env var instead."
+        echo "  qwen3_embedding_instances: Number of Qwen3-Embedding instances (default: 0). Optional; can set QWEN3_EMBEDDING_INSTANCES env var instead."
         echo ""
         echo "Examples:"
-        echo "  # Start 2 Gemma3, 1 Qwen, 1 Qwen3, 1 WhisSent:"
-        echo "  ./scripts/run_api.sh 2 1 1 1 start"
+        echo "  # Start 2 Gemma3, 1 Qwen, 1 Qwen3, 1 WhisSent, 1 Qwen3-Embedding:"
+        echo "  ./scripts/run_api.sh 2 1 1 1 1 start"
         echo "  "
         echo "  # Start 1 Gemma3, 0 Qwen, 2 Qwen3, (env var) 1 WhisSent:"
         echo "  WHISSENT_INSTANCES=1 ./scripts/run_api.sh 1 0 2 start"

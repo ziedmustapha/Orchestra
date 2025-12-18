@@ -1,0 +1,56 @@
+# Qwen3-Embedding-4B environment with vLLM 0.12.0
+# Requires CUDA 12.9 and PyTorch 2.9.0
+# Use with: uv pip install -r requirements_qwen3_embedding.txt
+
+# vLLM 0.12.0 - includes PyTorch 2.9.0 as dependency
+# Required for embedding task support (task="embed")
+vllm==0.12.0
+
+# Acceleration
+accelerate
+bitsandbytes
+
+# Transformers and NLP (>=4.51.0 required for Qwen3-Embedding)
+transformers>=4.57.3
+tokenizers
+sentencepiece
+tiktoken
+safetensors
+
+# Core utilities
+fastapi>=0.109,<1
+uvicorn[standard]>=0.24,<1
+aiohttp>=3.9,<4
+pydantic>=2,<3
+pydantic-settings>=2,<3
+requests>=2.31,<3
+prometheus-client>=0.20,<1
+
+# Async
+anyio
+nest-asyncio
+uvloop
+
+# Monitoring
+opentelemetry-api
+opentelemetry-sdk
+
+# Data/Utils
+numpy
+scipy
+pyyaml
+python-dotenv
+python-multipart
+python-json-logger
+tqdm
+rich
+orjson
+
+# HuggingFace
+huggingface-hub
+
+# Distributed
+ray
+
+# xgrammar updated for 0.12.0
+xgrammar>=0.1.27

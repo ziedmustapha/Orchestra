@@ -175,12 +175,13 @@ class WorkerInfo:
         self.last_error: Optional[str] = None
 
 class LoadBalancer:
-    def __init__(self, base_port: int, gemma_workers: int, qwen_workers: int, qwen3_workers: int = 0, whissent_workers: int = 0):
+    def __init__(self, base_port: int, gemma_workers: int, qwen_workers: int, qwen3_workers: int = 0, whissent_workers: int = 0, qwen3_embedding_workers: int = 0):
         self.worker_pools: Dict[str, List[WorkerInfo]] = {
             "gemma3": [],
             "qwen": [],
             "qwen3": [],
             "whissent": [],
+            "qwen3_embedding": [],
         }
         
         worker_id_counter = 0
@@ -207,10 +208,16 @@ class LoadBalancer:
             port = base_port + worker_id_counter
             self.worker_pools["whissent"].append(WorkerInfo(worker_id_counter, port, "whissent"))
             worker_id_counter += 1
+        
+        # Initialize Qwen3-Embedding workers
+        for i in range(qwen3_embedding_workers):
+            port = base_port + worker_id_counter
+            self.worker_pools["qwen3_embedding"].append(WorkerInfo(worker_id_counter, port, "qwen3_embedding"))
+            worker_id_counter += 1
             
         self.session: Optional[aiohttp.ClientSession] = None
         logger.info(
-            f"Load Balancer configured for: {gemma_workers} Gemma3, {qwen_workers} Qwen, {qwen3_workers} Qwen3, {whissent_workers} WhisSent workers."
+            f"Load Balancer configured for: {gemma_workers} Gemma3, {qwen_workers} Qwen, {qwen3_workers} Qwen3, {whissent_workers} WhisSent, {qwen3_embedding_workers} Qwen3-Embedding workers."
         )
         # --- Global metrics ---
         self.start_time = time.time()
@@ -222,6 +229,7 @@ class LoadBalancer:
             "qwen": {"requests": 0, "success": 0, "errors": 0},
             "qwen3": {"requests": 0, "success": 0, "errors": 0},
             "whissent": {"requests": 0, "success": 0, "errors": 0},
+            "qwen3_embedding": {"requests": 0, "success": 0, "errors": 0},
         }
 
     async def start(self):
@@ -303,7 +311,7 @@ class LoadBalancer:
             raise HTTPException(status_code=503, detail=f"No workers available for model '{model_name}'.")
 
         # Check if this model supports concurrent processing (vLLM AsyncLLMEngine models only)
-        supports_concurrent = model_name in {"qwen3", "qwen", "gemma3"}  # Models using AsyncLLMEngine
+        supports_concurrent = model_name in {"qwen3", "qwen", "gemma3", "qwen3_embedding"}  # Models using vLLM
         
         if supports_concurrent:
             # Forward immediately - let vLLM handle batching internally
@@ -492,8 +500,9 @@ async def startup():
     qwen_instances = int(os.environ.get("QWEN_INSTANCES", "0"))
     qwen3_instances = int(os.environ.get("QWEN3_INSTANCES", "0"))
     whissent_instances = int(os.environ.get("WHISSENT_INSTANCES", "0"))
+    qwen3_embedding_instances = int(os.environ.get("QWEN3_EMBEDDING_INSTANCES", "0"))
     base_port = int(os.environ.get("WORKER_BASE_PORT", "9100"))
-    load_balancer = LoadBalancer(base_port, gemma_instances, qwen_instances, qwen3_instances, whissent_instances)
+    load_balancer = LoadBalancer(base_port, gemma_instances, qwen_instances, qwen3_instances, whissent_instances, qwen3_embedding_instances)
     await load_balancer.start()
 
 # ... (shutdown, infer, status, root endpoints are similar, just use the new load_balancer logic) ...

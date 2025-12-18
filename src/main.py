@@ -150,6 +150,12 @@ async def preload_model():
             loaded_model_module = whissent_module
             await asyncio.to_thread(whissent_module.initialize_whissent)
             logger.info("WhisSent model initialized successfully.")
+        elif MODEL_TYPE == "qwen3_embedding":
+            # Qwen3-Embedding-4B text embedding model
+            import models.qwen3_embedding as qwen3_emb_module
+            loaded_model_module = qwen3_emb_module
+            await asyncio.to_thread(qwen3_emb_module.initialize_qwen3_embedding)
+            logger.info("Qwen3-Embedding model initialized successfully.")
         else:
             logger.error(f"Unknown MODEL_TO_LOAD value: '{MODEL_TYPE}'")
 
@@ -317,6 +323,45 @@ async def infer(request: Request):
                 emotion_top_k,
             )
             final_response = {**result, "gpu_id_of_model_worker": gpu_id}
+
+        elif mn == "qwen3_embedding":
+            # Text embedding inference
+            texts = rb.get("texts")  # List of texts for batch embedding
+            text = rb.get("text")    # Single text embedding
+            instruction = rb.get("instruction")  # Optional task instruction
+            embedding_dim = rb.get("embedding_dim")  # Optional dimension (MRL support)
+            
+            if texts:
+                # Batch embedding
+                result = await asyncio.to_thread(
+                    loaded_model_module.embed_texts,
+                    texts,
+                    instruction,
+                    embedding_dim,
+                )
+                final_response = {
+                    "embeddings": result["embeddings"],
+                    "embedding_dim": result["embedding_dim"],
+                    "count": result["count"],
+                    "metrics": result["metrics"],
+                    "gpu_id_of_model_worker": "auto"
+                }
+            elif text:
+                # Single text embedding
+                result = await asyncio.to_thread(
+                    loaded_model_module.embed_text,
+                    text,
+                    instruction,
+                    embedding_dim,
+                )
+                final_response = {
+                    "embedding": result["embedding"],
+                    "embedding_dim": result["embedding_dim"],
+                    "metrics": result["metrics"],
+                    "gpu_id_of_model_worker": "auto"
+                }
+            else:
+                raise HTTPException(status_code=400, detail="'text' or 'texts' is required for qwen3_embedding")
 
         else:
             # This case should not be reached due to the check at the beginning
